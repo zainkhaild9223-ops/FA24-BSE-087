@@ -1,12 +1,71 @@
-// main.dart
-// Flutter UI wrapper around the Tasbeeh OOP engine (tasbeeh.dart)
 
 import 'package:flutter/material.dart';
-import 'tasbeeh.dart';
 
 void main() {
   runApp(const TasbeehApp());
 }
+
+
+mixin NotificationMixin {
+  void triggerVibration() {
+    print("📳 [VIBRATION]: Target Completed!");
+  }
+}
+
+class Tasbeeh with NotificationMixin {
+  // Private fields — cannot be modified directly from outside the class
+  String _dhikrName;
+  int _counter;
+  int _target;
+
+  Tasbeeh({required String name, int target = 33})
+      : _dhikrName = name,
+        _counter = 0,
+        _target = target;
+
+  Tasbeeh.subhanAllah()
+      : _dhikrName = "SubhanAllah",
+        _counter = 0,
+        _target = 33;
+
+  Tasbeeh.alhamdulillah()
+      : _dhikrName = "Alhamdulillah",
+        _counter = 0,
+        _target = 33;
+
+  Tasbeeh.allahAkbar()
+      : _dhikrName = "Allahu Akbar",
+        _counter = 0,
+        _target = 33;
+
+
+  String get dhikrName => _dhikrName;
+  int get counter => _counter;
+  int get target => _target;
+
+  bool get isCompleted => _counter >= _target;
+
+
+
+
+  void increment() {
+    if (_counter < _target) {
+      _counter++;
+    }
+    if (_counter == _target) {
+      print("Target Reached for $_dhikrName!");
+      triggerVibration();
+    }
+  }
+
+  void reset() {
+    _counter = 0;
+  }
+
+  @override
+  String toString() => "Tasbeeh($_dhikrName: $_counter / $_target)";
+}
+
 
 class TasbeehApp extends StatelessWidget {
   const TasbeehApp({super.key});
@@ -34,12 +93,11 @@ class TasbeehHomePage extends StatefulWidget {
 }
 
 class _TasbeehHomePageState extends State<TasbeehHomePage> {
-  // Preset engines built with the named constructors
   final List<Tasbeeh> _presets = [
     Tasbeeh.subhanAllah(),
     Tasbeeh.alhamdulillah(),
     Tasbeeh.allahAkbar(),
-    Tasbeeh(name: "Astaghfirullah", target: 33), // default constructor
+    Tasbeeh(name: "Astaghfirullah", target: 33),
   ];
 
   int _selectedIndex = 0;
@@ -108,7 +166,6 @@ class _TasbeehHomePageState extends State<TasbeehHomePage> {
 
             const Spacer(),
 
-            // Counter circle — tap anywhere on the circle to increment
             GestureDetector(
               onTap: _onIncrement,
               behavior: HitTestBehavior.opaque,
