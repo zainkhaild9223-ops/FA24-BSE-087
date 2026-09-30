@@ -43,7 +43,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   static const String rollNo = 'FA24-BSE-087';
   static const String department = 'Computer Science';
   static const String semester = '5th';
-  static const String profileImageUrl = 'lib/profile_pic.png';
+
+  // Your local photo (must be listed in pubspec.yaml under assets)
+  static const String profileImagePath = 'assets/profile_pic.png';
 
   final List<Course> _courses = const [
     Course('CS-301', 'Mobile Application Development', 3),
@@ -143,18 +145,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
             currentAccountPicture: CircleAvatar(
               backgroundColor: Colors.white,
               child: ClipOval(
-                child: Image.network(
-                  profileImageUrl,
+                child: Image.asset(
+                  profileImagePath,
                   width: 72,
                   height: 72,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Icon(Icons.person,
-                      size: 40, color: scheme.primary),
+                  errorBuilder: (_, __, ___) =>
+                      Icon(Icons.person, size: 40, color: scheme.primary),
                 ),
               ),
             ),
             accountName: const Text(studentName),
-            accountEmail: const Text('abdulrehman@campus.edu.pk'),
+            accountEmail: const Text('zainkhalid@campus.edu.pk'),
           ),
           ListTile(
             leading: const Icon(Icons.person_outline),
@@ -266,8 +268,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           radius: 44,
           backgroundColor: Colors.white,
           child: ClipOval(
-            child: Image.network(
-              profileImageUrl,
+            child: Image.asset(
+              profileImagePath,
               width: 88,
               height: 88,
               fit: BoxFit.cover,
