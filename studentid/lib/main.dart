@@ -39,20 +39,20 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final TextEditingController _noteController = TextEditingController();
 
-  static const String studentName = 'Abdulrehman';
-  static const String rollNo = '2023-CS-101';
+  static const String studentName = 'Muhammad Zain Khalid';
+  static const String rollNo = 'FA24-BSE-087';
   static const String department = 'Computer Science';
   static const String semester = '5th';
-  static const String profileImageUrl = 'https://i.pravatar.cc/300?img=12';
+  static const String profileImageUrl = 'lib/profile_pic.png';
 
   final List<Course> _courses = const [
     Course('CS-301', 'Mobile Application Development', 3),
-    Course('CS-302', 'Database Systems', 3),
-    Course('CS-303', 'Operating Systems', 4),
-    Course('CS-304', 'Computer Networks', 3),
-    Course('MT-305', 'Linear Algebra', 3),
+    Course('CS-302', 'Assembly Language', 3),
+    Course('CS-303', 'Operating Systems', 3),
+    Course('CS-304', 'Multi-variable calculas', 3),
+    Course('MT-305', 'Web Technologies', 3),
     Course('HU-306', 'Technical Writing', 2),
-    Course('CS-307', 'Software Engineering', 3),
+    Course('CS-307', 'Software Design and Architecture', 3),
   ];
 
   @override
