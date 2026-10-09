@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../data.dart';
+import '../drive_service.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -9,7 +12,26 @@ class BackupSyncScreen extends StatefulWidget {
 }
 
 class _BackupSyncScreenState extends State<BackupSyncScreen> {
-  bool wifi = true, cellular = false;
+  bool wifi = true, cellular = false, syncing = false;
+
+  Future<void> _sync() async {
+    if (syncing) return;
+    setState(() => syncing = true);
+    final backup = jsonEncode({
+      'exportedAt': DateTime.now().toIso8601String(),
+      'doctors': [for (final d in docs) {'name': d.name, 'specialization': d.spec, 'hospital': d.hospital, 'phone': d.phone}],
+      'visits': [for (final v in visits) {'date': v.date, 'doctor': v.doctor, 'hospital': v.hospital, 'diagnosis': v.dx, 'medicines': v.meds, 'tests': v.tests}],
+    });
+    String msg = 'Backup saved to your Google Drive';
+    try {
+      await DriveService.instance.uploadText('medical_history_backup.json', backup);
+    } catch (e) {
+      msg = 'Sync failed: $e';
+    }
+    if (!mounted) return;
+    setState(() => syncing = false);
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -84,7 +106,7 @@ class _BackupSyncScreenState extends State<BackupSyncScreen> {
               Text('● Visits (4%)', style: TextStyle(fontSize: 10, color: Color(0xFF7C86E8))),
             ]),
             const SizedBox(height: 12),
-            Btn('Sync Now', icon: Icons.sync, onTap: () {}),
+            Btn(syncing ? 'Syncing...' : 'Sync Now', icon: Icons.sync, onTap: _sync),
           ]),
         ),
         const SizedBox(height: 12),

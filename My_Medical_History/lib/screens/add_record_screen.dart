@@ -1,9 +1,43 @@
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import '../drive_service.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
-class AddRecordScreen extends StatelessWidget {
+class AddRecordScreen extends StatefulWidget {
   const AddRecordScreen({super.key});
+  @override
+  State<AddRecordScreen> createState() => _AddRecordState();
+}
+
+class _AddRecordState extends State<AddRecordScreen> {
+  String? fileName;
+  String status = ''; // uploading | done | failed
+
+  Future<void> _pick(String kind) async {
+    File? picked;
+    if (kind == 'pdf') {
+      final r = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf']);
+      final p = r?.files.single.path;
+      if (p != null) picked = File(p);
+    } else {
+      final x = await ImagePicker().pickImage(source: kind == 'camera' ? ImageSource.camera : ImageSource.gallery);
+      if (x != null) picked = File(x.path);
+    }
+    if (picked == null) return;
+    final file = picked;
+    setState(() { fileName = file.path.split(Platform.pathSeparator).last; status = 'uploading'; });
+    try {
+      await DriveService.instance.upload(file); // -> user's own Google Drive
+      if (mounted) setState(() => status = 'done');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => status = 'failed');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Drive upload failed: $e')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,27 +109,15 @@ class AddRecordScreen extends StatelessWidget {
             const SizedBox(height: 4),
             const Text('Attach scan, phone camera photo, or digital note', style: TextStyle(fontSize: 12, color: C.muted)),
             const SizedBox(height: 10),
-            const Row(children: [
-              Expanded(child: _Upload(Icons.photo_camera_outlined, 'Take Photo')),
-              SizedBox(width: 8),
-              Expanded(child: _Upload(Icons.photo_library_outlined, 'Gallery')),
-              SizedBox(width: 8),
-              Expanded(child: _Upload(Icons.upload_file, 'Upload PDF')),
+            Row(children: [
+              Expanded(child: _Upload(Icons.photo_camera_outlined, 'Take Photo', () => _pick('camera'))),
+              const SizedBox(width: 8),
+              Expanded(child: _Upload(Icons.photo_library_outlined, 'Gallery', () => _pick('gallery'))),
+              const SizedBox(width: 8),
+              Expanded(child: _Upload(Icons.upload_file, 'Upload PDF', () => _pick('pdf'))),
             ]),
             const SizedBox(height: 10),
-            Card2(
-              child: Row(children: [
-                Container(width: 44, height: 52, decoration: BoxDecoration(color: C.lav, borderRadius: BorderRadius.circular(6)), child: const Icon(Icons.receipt_long, color: C.muted)),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Rx_Khan_060ct2026.pdf', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-                    Text('1.2 MB • Scanned & text indexed', style: TextStyle(fontSize: 11, color: C.muted)),
-                    Text('☁ Uploaded & scanned', style: TextStyle(fontSize: 11, color: C.green, fontWeight: FontWeight.w600)),
-                  ]),
-                ),
-              ]),
-            ),
+            if (fileName != null) _FileCard(fileName!, status),
             const SizedBox(height: 8),
             const Row(children: [
               Icon(Icons.visibility_outlined, size: 14, color: C.primary), SizedBox(width: 4),
@@ -180,14 +202,38 @@ class _Dashed extends StatelessWidget {
 class _Upload extends StatelessWidget {
   final IconData i;
   final String t;
-  const _Upload(this.i, this.t);
+  final VoidCallback onTap;
+  const _Upload(this.i, this.t, this.onTap);
   @override
   Widget build(BuildContext context) => Card2(
+        onTap: onTap,
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Column(children: [
           IconBadge(i, C.lav2, C.primary, 34),
           const SizedBox(height: 6),
           Text(t, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
+        ]),
+      );
+}
+
+class _FileCard extends StatelessWidget {
+  final String name, status;
+  const _FileCard(this.name, this.status);
+  @override
+  Widget build(BuildContext context) => Card2(
+        child: Row(children: [
+          Container(width: 44, height: 52, decoration: BoxDecoration(color: C.lav, borderRadius: BorderRadius.circular(6)), child: const Icon(Icons.receipt_long, color: C.muted)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+              Text(
+                status == 'uploading' ? 'Uploading to your Google Drive...' : status == 'done' ? '☁ Saved to your Google Drive' : 'Upload failed',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: status == 'failed' ? C.red : status == 'done' ? C.green : C.muted),
+              ),
+            ]),
+          ),
+          if (status == 'uploading') const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
         ]),
       );
 }

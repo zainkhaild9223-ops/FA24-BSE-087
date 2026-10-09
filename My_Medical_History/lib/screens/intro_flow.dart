@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../drive_service.dart';
 import '../main.dart' show Shell;
 import '../theme.dart';
 import '../widgets.dart';
@@ -122,7 +123,14 @@ class SignInScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity, height: 54,
                 child: OutlinedButton.icon(
-                  onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const DriveSetupScreen())),
+                  onPressed: () async {
+                    try {
+                      final u = await DriveService.instance.signIn();
+                      if (u != null && context.mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const DriveSetupScreen()));
+                    } catch (e) {
+                      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
+                    }
+                  },
                   icon: const Text('G', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: Color(0xFF4285F4))),
                   label: const Text('Continue with Google', style: TextStyle(fontWeight: FontWeight.w700)),
                   style: OutlinedButton.styleFrom(
@@ -153,11 +161,16 @@ class DriveSetupScreen extends StatefulWidget {
 class _DriveSetupState extends State<DriveSetupScreen> {
   int s = 0; // 0 idle, 1 connecting, 2 connected
 
-  void _connect() {
+  Future<void> _connect() async {
     setState(() => s = 1);
-    Future.delayed(const Duration(milliseconds: 1500), () {
+    try {
+      await DriveService.instance.ensureFolder();
       if (mounted) setState(() => s = 2);
-    });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => s = 0);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not connect Drive: $e')));
+    }
   }
 
   void _home() => Navigator.pushAndRemoveUntil(context, MaterialPageRoute(builder: (_) => const Shell()), (r) => false);
@@ -185,11 +198,11 @@ class _DriveSetupState extends State<DriveSetupScreen> {
               const SizedBox(height: 20),
               Card2(
                 child: Row(children: [
-                  const Avatar('S', 20),
+                  Avatar(DriveService.instance.user?.email ?? 'S', 20),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      const Text('sarah.jenkins@gmail.com', style: TextStyle(fontWeight: FontWeight.w700)),
+                      Text(DriveService.instance.user?.email ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
                       Text(s == 2 ? '● Connected' : 'Google account', style: TextStyle(fontSize: 12, color: s == 2 ? C.green : C.muted, fontWeight: FontWeight.w600)),
                     ]),
                   ),
@@ -198,7 +211,7 @@ class _DriveSetupState extends State<DriveSetupScreen> {
               ),
               if (s == 2) ...[
                 const SizedBox(height: 12),
-                Card2(child: Column(children: [_row('Last Sync', 'Just now'), _row('Sync Status', 'Everything is up to date'), _row('Storage Used', '24.8 MB of 15 GB')])),
+                Card2(child: Column(children: [_row('Drive Folder', 'My Medical History'), _row('Sync Status', 'Everything is up to date'), _row('Access', 'Only files created by this app')])),
               ],
               const Spacer(),
               if (s == 0) Btn('Connect Google Drive', icon: Icons.cloud_upload_outlined, onTap: _connect),
