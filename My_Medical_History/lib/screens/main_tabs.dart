@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../data.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'add_record_screen.dart';
@@ -74,12 +75,14 @@ class DoctorsScreen extends StatelessWidget {
           child: Column(children: [
             const _TopSearch('Doctors', 'Search doctors...'),
             Expanded(
-              child: ListView.separated(
+              child: Store.instance.docs.isEmpty
+                  ? EmptyState(Icons.medical_services_outlined, 'No doctors added yet.', btn: 'Add Doctor', onTap: () => _go(context, const AddRecordScreen()))
+                  : ListView.separated(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 90),
-                itemCount: docs.length,
+                itemCount: Store.instance.docs.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 12),
                 itemBuilder: (c, i) {
-                  final d = docs[i];
+                  final d = Store.instance.docs[i];
                   return Card2(
                     onTap: () => _go(c, const DoctorProfileScreen()),
                     child: Row(children: [
@@ -130,18 +133,20 @@ class _HistoryState extends State<HistoryScreen> {
         ),
       );
 
-  Widget _timeline() => ListView.builder(
+  Widget _timeline() => Store.instance.visits.isEmpty
+      ? EmptyState(Icons.history, 'Your medical history will appear here.', btn: 'Add Medical Visit', onTap: () => _go(context, const AddRecordScreen()))
+      : ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: visits.length,
+        itemCount: Store.instance.visits.length,
         itemBuilder: (c, i) {
-          final v = visits[i];
+          final v = Store.instance.visits[i];
           return IntrinsicHeight(
             child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               SizedBox(
                 width: 26,
                 child: Column(children: [
                   Container(width: 12, height: 12, margin: const EdgeInsets.only(top: 4), decoration: BoxDecoration(shape: BoxShape.circle, color: i == 0 ? C.primary : C.muted)),
-                  if (i < visits.length - 1) Expanded(child: Container(width: 2, color: C.lav2)),
+                  if (i < Store.instance.visits.length - 1) Expanded(child: Container(width: 2, color: C.lav2)),
                 ]),
               ),
               Expanded(
@@ -181,18 +186,20 @@ class _HistoryState extends State<HistoryScreen> {
             Text(m.name, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
             Text('Prescribed ${m.times} times', style: const TextStyle(color: C.muted)),
             const SizedBox(height: 8),
-            for (final u in usage.where((u) => u.$3.startsWith(m.name)))
+            for (final u in Store.instance.usage.where((u) => u.$3.startsWith(m.name)))
               ListTile(dense: true, contentPadding: EdgeInsets.zero, leading: const Icon(Icons.history, color: C.primary), title: Text(u.$3), subtitle: Text('${u.$1} • ${u.$2}')),
           ]),
         ),
       );
 
-  Widget _medicines() => ListView.separated(
+  Widget _medicines() => Store.instance.meds.isEmpty
+      ? const EmptyState(Icons.medication_outlined, 'No medicines recorded yet.')
+      : ListView.separated(
         padding: const EdgeInsets.all(16),
-        itemCount: meds.length,
+        itemCount: Store.instance.meds.length,
         separatorBuilder: (_, __) => const SizedBox(height: 12),
         itemBuilder: (c, i) {
-          final m = meds[i];
+          final m = Store.instance.meds[i];
           return Card2(
             onTap: () => _medSheet(m),
             child: Row(children: [
@@ -244,7 +251,7 @@ class _ReportsState extends State<ReportsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final list = reps.where((r) => cat == 'All' || r.type == cat).toList();
+    final list = Store.instance.reps.where((r) => cat == 'All' || r.type == cat).toList();
     return SafeArea(
       child: Column(children: [
         const _TopSearch('Reports', 'Search reports...'),
@@ -310,7 +317,7 @@ class _SearchState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final res = usage.where((u) => q.isNotEmpty && '${u.$1} ${u.$2} ${u.$3}'.toLowerCase().contains(q.toLowerCase())).toList();
+    final res = Store.instance.usage.where((u) => q.isNotEmpty && '${u.$1} ${u.$2} ${u.$3}'.toLowerCase().contains(q.toLowerCase())).toList();
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white, surfaceTintColor: Colors.transparent,
@@ -418,6 +425,23 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsState extends State<SettingsScreen> {
   bool auto = true, lock = false, bio = true;
 
+  void _msg(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  Future<void> _sync() async {
+    _msg('Syncing...');
+    final r = await Store.instance.syncNow();
+    if (mounted) _msg(r);
+  }
+
+  Future<void> _restore() async {
+    try {
+      final n = await Store.instance.restore();
+      if (mounted) _msg(n < 0 ? 'No backup found in your Google Drive' : 'Restored $n visits from Google Drive');
+    } catch (e) {
+      if (mounted) _msg('Restore failed: $e');
+    }
+  }
+
   Widget _sw(bool v, ValueChanged<bool> f) => Switch(value: v, onChanged: f, activeColor: Colors.white, activeTrackColor: C.primary);
 
   Widget _tile(IconData i, String t, {String? sub, Widget? trailing, VoidCallback? onTap}) => ListTile(
@@ -440,16 +464,16 @@ class _SettingsState extends State<SettingsScreen> {
           _group('ACCOUNT', [_tile(Icons.person_outline, 'Profile', sub: 'Sarah Jenkins'), _tile(Icons.account_circle_outlined, 'Google Account', sub: 'sarah.jenkins@gmail.com')]),
           _group('BACKUP & SYNC', [
             _tile(Icons.cloud_outlined, 'Google Drive', sub: 'Connected', onTap: () => _go(context, Scaffold(appBar: topBar(context, 'Backup & Sync', 'My Medical History'), body: const BackupSyncScreen()))),
-            _tile(Icons.sync, 'Sync Now'),
+            _tile(Icons.sync, 'Sync Now', onTap: _sync),
             _tile(Icons.autorenew, 'Auto Sync', trailing: _sw(auto, (v) => setState(() => auto = v))),
-            _tile(Icons.schedule, 'Last Synced', sub: 'Today, 10:32 AM', trailing: const SizedBox()),
+            _tile(Icons.schedule, 'Last Synced', sub: Store.instance.lastSyncedText, trailing: const SizedBox()),
           ]),
           _group('SECURITY', [
             _tile(Icons.lock_outline, 'App Lock', trailing: _sw(lock, (v) => setState(() => lock = v))),
             _tile(Icons.pin_outlined, 'PIN'),
             _tile(Icons.fingerprint, 'Fingerprint / Biometric', trailing: _sw(bio, (v) => setState(() => bio = v))),
           ]),
-          _group('DATA', [_tile(Icons.ios_share, 'Export Medical History'), _tile(Icons.restore, 'Restore Backup')]),
+          _group('DATA', [_tile(Icons.ios_share, 'Export Medical History'), _tile(Icons.restore, 'Restore Backup', sub: 'Replaces data on this phone', onTap: _restore)]),
           _group('APP', [_tile(Icons.notifications_none, 'Notifications'), _tile(Icons.privacy_tip_outlined, 'Privacy'), _tile(Icons.info_outline, 'About')]),
           const SizedBox(height: 16),
         ]),

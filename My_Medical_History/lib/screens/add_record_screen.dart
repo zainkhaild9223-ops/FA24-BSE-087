@@ -3,8 +3,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../drive_service.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
+
+const _months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+String _fmt(DateTime d) => '${d.day.toString().padLeft(2, '0')} ${_months[d.month - 1]} ${d.year}';
+
+class _MedForm {
+  final name = TextEditingController(), dose = TextEditingController(), freq = TextEditingController(), days = TextEditingController(), note = TextEditingController();
+  String meal = 'After Meal';
+  Map<String, dynamic> toMap() => {'name': name.text.trim(), 'dose': dose.text.trim(), 'freq': freq.text.trim(), 'days': days.text.trim(), 'meal': meal, 'note': note.text.trim()};
+}
 
 class AddRecordScreen extends StatefulWidget {
   const AddRecordScreen({super.key});
@@ -13,8 +23,41 @@ class AddRecordScreen extends StatefulWidget {
 }
 
 class _AddRecordState extends State<AddRecordScreen> {
-  String? fileName;
-  String status = ''; // uploading | done | failed
+  final doctor = TextEditingController(), spec = TextEditingController(), phone = TextEditingController(), hospital = TextEditingController();
+  final dx = TextEditingController(), symptoms = TextEditingController(), notes = TextEditingController();
+  DateTime date = DateTime.now();
+  DateTime? followUp;
+  final meds = <_MedForm>[_MedForm()];
+  final tests = <List<TextEditingController>>[];
+  final files = <Map<String, dynamic>>[];
+  bool saving = false;
+
+  void _snack(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
+
+  Widget _field(String label, TextEditingController c, {int lines = 1, TextInputType? kb}) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: TextField(
+          controller: c, maxLines: lines, keyboardType: kb,
+          decoration: InputDecoration(
+            labelText: label, filled: true, fillColor: Colors.white,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: C.border)),
+          ),
+        ),
+      );
+
+  Widget _dateField(String label, DateTime? d, ValueChanged<DateTime> onPick) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: InkWell(
+          onTap: () async {
+            final p = await showDatePicker(context: context, initialDate: d ?? DateTime.now(), firstDate: DateTime(2000), lastDate: DateTime(2100));
+            if (p != null) setState(() => onPick(p));
+          },
+          child: InputDecorator(
+            decoration: InputDecoration(labelText: label, filled: true, fillColor: Colors.white, suffixIcon: const Icon(Icons.calendar_today, size: 18), border: OutlineInputBorder(borderRadius: BorderRadius.circular(12))),
+            child: Text(d == null ? 'Not set' : _fmt(d)),
+          ),
+        ),
+      );
 
   Future<void> _pick(String kind) async {
     File? picked;
@@ -28,86 +71,109 @@ class _AddRecordState extends State<AddRecordScreen> {
     }
     if (picked == null) return;
     final file = picked;
-    setState(() { fileName = file.path.split(Platform.pathSeparator).last; status = 'uploading'; });
+    final entry = <String, dynamic>{'name': file.path.split(Platform.pathSeparator).last, 'status': 'uploading'};
+    setState(() => files.add(entry));
     try {
-      await DriveService.instance.upload(file); // -> user's own Google Drive
-      if (mounted) setState(() => status = 'done');
+      final up = await DriveService.instance.upload(file); // -> user's own Google Drive
+      entry['driveId'] = up.id;
+      entry['status'] = 'done';
     } catch (e) {
-      if (!mounted) return;
-      setState(() => status = 'failed');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Drive upload failed: $e')));
+      entry['status'] = 'failed';
+      if (mounted) _snack('Drive upload failed: $e');
     }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _save() async {
+    if (doctor.text.trim().isEmpty || dx.text.trim().isEmpty) return _snack('Doctor name and diagnosis are required');
+    if (files.any((f) => f['status'] == 'uploading')) return _snack('Please wait for the upload to finish');
+    setState(() => saving = true);
+    await Store.instance.addVisit({
+      'date': _fmt(date), 'doctor': doctor.text.trim(), 'spec': spec.text.trim(), 'phone': phone.text.trim(), 'hospital': hospital.text.trim(),
+      'dx': dx.text.trim(), 'symptoms': symptoms.text.trim(), 'notes': notes.text.trim(), 'followUp': followUp == null ? '' : _fmt(followUp!),
+      'meds': [for (final m in meds) if (m.name.text.trim().isNotEmpty) m.toMap()],
+      'tests': [for (final t in tests) if (t[0].text.trim().isNotEmpty) {'name': t[0].text.trim(), 'result': t[1].text.trim()}],
+      'files': [for (final f in files) if (f['status'] == 'done') {'name': f['name'], 'driveId': f['driveId']}],
+    });
+    if (!mounted) return;
+    final m = ScaffoldMessenger.of(context);
+    Navigator.pop(context);
+    m.showSnackBar(const SnackBar(content: Text('Visit saved. Syncing to your Google Drive...')));
   }
 
   @override
   Widget build(BuildContext context) {
-    const steps = ['Doctor', 'Location', 'Visit Info', 'Rx & Tests', 'Review'];
+    final known = Store.instance.docs;
     return Scaffold(
       appBar: topBar(context, 'Add Record', 'My Medical History'),
       body: Column(children: [
         Expanded(
-          child: ListView(padding: const EdgeInsets.all(12), children: [
-            Row(children: [
-              for (int i = 0; i < 5; i++) ...[
-                Container(
-                  width: 28, height: 28, alignment: Alignment.center,
-                  decoration: BoxDecoration(shape: BoxShape.circle, color: i < 4 ? C.primary : C.lav2, border: i == 3 ? Border.all(color: C.blueChip, width: 3) : null),
-                  child: i < 3 ? const Icon(Icons.check, size: 15, color: Colors.white) : Text('${i + 1}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: i == 3 ? Colors.white : C.muted)),
-                ),
-                if (i < 4) Expanded(child: Container(height: 2, color: i < 3 ? C.primary : C.lav2)),
-              ],
-            ]),
-            const SizedBox(height: 4),
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              for (int i = 0; i < 5; i++) Text(steps[i], style: TextStyle(fontSize: 10, fontWeight: i == 3 ? FontWeight.w800 : FontWeight.w500, color: i == 3 ? C.primary : C.muted)),
-            ]),
-            const SizedBox(height: 14),
-            Card2(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                  Text('VISIT SELECTED', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: C.muted)),
-                  Text('06 Oct 2026', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-                ]),
-                const Text('Dr. Ahmed Khan', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
-                const Text('City Medical Hospital', style: TextStyle(fontSize: 12, color: C.muted)),
-                const SizedBox(height: 6),
-                const Pill('Reason: Persistent Cough & Fever', C.lav2, C.ink, icon: Icons.favorite_border),
-              ]),
-            ),
-            const SizedBox(height: 16),
-            const Row(children: [Expanded(child: H('Prescribed Medicines')), Pill('2 Added', C.lav2, C.ink)]),
-            const SizedBox(height: 4),
-            const Text('Add each medicine prescribed during this visit', style: TextStyle(fontSize: 12, color: C.muted)),
-            const SizedBox(height: 10),
-            const _MedCard('Panadol (Paracetamol) 500mg', '1 Tablet • 2 times daily (every 8 hrs)', '5 Days', 'After Meal', 'Take with plenty of water. Stop if fever subsides.'),
+          child: ListView(padding: const EdgeInsets.all(14), children: [
+            const H('Doctor'),
             const SizedBox(height: 8),
-            const _MedCard('Amoxicillin 250mg', '1 Capsule • 2 times daily', '7 Days', 'Before Meal', 'Complete the entire course without interruption.'),
-            const SizedBox(height: 10),
-            _Dashed('Add Another Medicine', Icons.add_circle_outline),
-            const SizedBox(height: 16),
-            const Row(children: [Expanded(child: H('Medical Tests & Labs')), Pill('1 Test', C.lav2, C.ink)]),
-            const SizedBox(height: 4),
-            const Text('Investigations required by the doctor', style: TextStyle(fontSize: 12, color: C.muted)),
-            const SizedBox(height: 10),
-            Card2(
-              child: Row(children: [
-                const IconBadge(Icons.science_outlined, C.lav2, C.primary, 34),
-                const SizedBox(width: 10),
-                const Expanded(
+            if (known.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Wrap(spacing: 8, children: [
+                  for (final d in known)
+                    ActionChip(
+                      label: Text(d.name), backgroundColor: C.lav2, side: BorderSide.none,
+                      onPressed: () => setState(() { doctor.text = d.name; spec.text = d.spec; phone.text = d.phone; hospital.text = d.hospital; }),
+                    ),
+                ]),
+              ),
+            _field('Doctor name *', doctor),
+            _field('Specialization', spec),
+            _field('Phone', phone, kb: TextInputType.phone),
+            _field('Hospital / Clinic', hospital),
+            const SizedBox(height: 8),
+            const H('Visit Information'),
+            const SizedBox(height: 8),
+            _dateField('Visit date', date, (d) => date = d),
+            _field('Diagnosis *', dx),
+            _field('Symptoms', symptoms, lines: 2),
+            _field("Doctor's notes", notes, lines: 2),
+            _dateField('Follow-up date', followUp, (d) => followUp = d),
+            const SizedBox(height: 8),
+            const H('Prescribed Medicines'),
+            const SizedBox(height: 8),
+            for (int i = 0; i < meds.length; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Card2(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Complete Blood Count', style: TextStyle(fontWeight: FontWeight.w700)),
-                    Text('06 Oct 2026 • Lab Panel', style: TextStyle(fontSize: 11, color: C.muted)),
+                    Row(children: [
+                      Expanded(child: Text('Medicine ${i + 1}', style: const TextStyle(fontWeight: FontWeight.w700))),
+                      if (meds.length > 1) IconButton(icon: const Icon(Icons.delete_outline, color: C.red), onPressed: () => setState(() => meds.removeAt(i))),
+                    ]),
+                    _field('Medicine name', meds[i].name),
+                    Row(children: [
+                      Expanded(child: _field('Dose (500mg)', meds[i].dose)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _field('Frequency', meds[i].freq)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _field('Duration', meds[i].days)),
+                    ]),
+                    Wrap(spacing: 8, children: [
+                      for (final o in ['Before Meal', 'After Meal', 'With Meal', 'Night'])
+                        ChoiceChip(label: Text(o), selected: meds[i].meal == o, showCheckmark: false, selectedColor: C.blueChip, onSelected: (_) => setState(() => meds[i].meal = o)),
+                    ]),
+                    const SizedBox(height: 10),
+                    _field('Instructions', meds[i].note),
                   ]),
                 ),
-                const Pill('Pending review', Color(0xFFFFE9C7), Color(0xFF8A5A00)),
-              ]),
-            ),
-            const SizedBox(height: 10),
-            _Dashed('Add Medical Test', Icons.add_circle_outline),
-            const SizedBox(height: 16),
-            const H('Prescription Document'),
+              ),
+            _Dashed('Add Medicine', () => setState(() => meds.add(_MedForm()))),
+            const SizedBox(height: 20),
+            const H('Medical Tests & Labs'),
+            const SizedBox(height: 8),
+            for (final t in tests) Card2(child: Column(children: [_field('Test name', t[0]), _field('Result', t[1])])),
+            if (tests.isNotEmpty) const SizedBox(height: 10),
+            _Dashed('Add Medical Test', () => setState(() => tests.add([TextEditingController(), TextEditingController()]))),
+            const SizedBox(height: 20),
+            const H('Prescription & Reports'),
             const SizedBox(height: 4),
-            const Text('Attach scan, phone camera photo, or digital note', style: TextStyle(fontSize: 12, color: C.muted)),
+            const Text('Files are uploaded to your own Google Drive', style: TextStyle(fontSize: 12, color: C.muted)),
             const SizedBox(height: 10),
             Row(children: [
               Expanded(child: _Upload(Icons.photo_camera_outlined, 'Take Photo', () => _pick('camera'))),
@@ -117,31 +183,19 @@ class _AddRecordState extends State<AddRecordScreen> {
               Expanded(child: _Upload(Icons.upload_file, 'Upload PDF', () => _pick('pdf'))),
             ]),
             const SizedBox(height: 10),
-            if (fileName != null) _FileCard(fileName!, status),
-            const SizedBox(height: 8),
-            const Row(children: [
-              Icon(Icons.visibility_outlined, size: 14, color: C.primary), SizedBox(width: 4),
-              Text('View Preview', style: TextStyle(fontSize: 12, color: C.primary, fontWeight: FontWeight.w700)),
-              Spacer(),
-              Icon(Icons.refresh, size: 14), SizedBox(width: 4), Text('Replace', style: TextStyle(fontSize: 12)),
-              SizedBox(width: 16),
-              Icon(Icons.delete_outline, size: 14, color: C.red), SizedBox(width: 4), Text('Delete', style: TextStyle(fontSize: 12, color: C.red)),
-            ]),
+            for (final f in files) Padding(padding: const EdgeInsets.only(bottom: 8), child: _FileCard('${f['name']}', '${f['status']}')),
+            const SizedBox(height: 12),
           ]),
         ),
         Container(
           color: Colors.white,
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
           child: SafeArea(
             top: false,
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Row(children: [
-                Expanded(child: Btn('‹ Back', filled: false, onTap: () => Navigator.pop(context))),
-                const SizedBox(width: 10),
-                Expanded(flex: 2, child: Btn('Save & Review Visit  →', onTap: () {})),
-              ]),
+              Btn(saving ? 'Saving...' : 'Save Medical Visit', onTap: saving ? null : _save),
               const SizedBox(height: 6),
-              const Text('☁ Automatically backed up to Google Drive when saved', style: TextStyle(fontSize: 10, color: C.muted)),
+              const Text('☁ Saved on this phone and auto-synced to your Google Drive', style: TextStyle(fontSize: 10, color: C.muted)),
             ]),
           ),
         ),
@@ -150,52 +204,21 @@ class _AddRecordState extends State<AddRecordScreen> {
   }
 }
 
-class _MedCard extends StatelessWidget {
-  final String name, dose, days, when, note;
-  const _MedCard(this.name, this.dose, this.days, this.when, this.note);
-  @override
-  Widget build(BuildContext context) => Card2(
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            const IconBadge(Icons.medication_outlined, C.lav2, C.primary, 32),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                Text(dose, style: const TextStyle(fontSize: 11, color: C.muted)),
-              ]),
-            ),
-            const Icon(Icons.edit_outlined, size: 16), const SizedBox(width: 8),
-            const Icon(Icons.delete_outline, size: 16, color: C.red),
-          ]),
-          const SizedBox(height: 8),
-          Wrap(spacing: 6, children: [Pill(days, C.lav2, C.ink), Pill(when, C.mint, C.green)]),
-          const SizedBox(height: 8),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: C.lav, borderRadius: BorderRadius.circular(8)),
-            child: Row(children: [
-              const Icon(Icons.info_outline, size: 14, color: C.primary), const SizedBox(width: 6),
-              Expanded(child: Text(note, style: const TextStyle(fontSize: 11))),
-            ]),
-          ),
-        ]),
-      );
-}
-
 class _Dashed extends StatelessWidget {
   final String t;
-  final IconData i;
-  const _Dashed(this.t, this.i);
+  final VoidCallback onTap;
+  const _Dashed(this.t, this.onTap);
   @override
-  Widget build(BuildContext context) => Container(
-        height: 48,
-        decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: C.primary.withOpacity(.4), width: 1.5), color: C.lav),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(i, size: 18, color: C.primary), const SizedBox(width: 8),
-          Text(t, style: const TextStyle(color: C.primary, fontWeight: FontWeight.w700)),
-        ]),
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        child: Container(
+          height: 48,
+          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: C.primary.withOpacity(.4), width: 1.5), color: C.lav),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            const Icon(Icons.add_circle_outline, size: 18, color: C.primary), const SizedBox(width: 8),
+            Text('+ $t', style: const TextStyle(color: C.primary, fontWeight: FontWeight.w700)),
+          ]),
+        ),
       );
 }
 

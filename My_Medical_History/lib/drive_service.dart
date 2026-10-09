@@ -79,4 +79,25 @@ class DriveService {
       await api.files.create(drive.File(name: name, parents: [parent]), uploadMedia: media);
     }
   }
+
+  Future<bool> trySilent() async {
+    try {
+      user = await _gs.signInSilently();
+    } catch (_) {}
+    return user != null;
+  }
+
+  /// Read a text file from the user's Drive folder (null if it does not exist).
+  Future<String?> downloadText(String name) async {
+    final api = await _api();
+    final parent = await _folder(api);
+    final r = await api.files.list(q: "name='$name' and '$parent' in parents and trashed=false", $fields: 'files(id)');
+    if (r.files?.isEmpty ?? true) return null;
+    final media = await api.files.get(r.files!.first.id!, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
+    final bytes = <int>[];
+    await for (final c in media.stream) {
+      bytes.addAll(c);
+    }
+    return utf8.decode(bytes);
+  }
 }

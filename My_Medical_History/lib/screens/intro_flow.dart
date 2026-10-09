@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../drive_service.dart';
 import '../main.dart' show Shell;
+import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
 
@@ -160,11 +161,16 @@ class DriveSetupScreen extends StatefulWidget {
 
 class _DriveSetupState extends State<DriveSetupScreen> {
   int s = 0; // 0 idle, 1 connecting, 2 connected
+  int restored = 0;
 
   Future<void> _connect() async {
     setState(() => s = 1);
     try {
       await DriveService.instance.ensureFolder();
+      if (Store.instance.isEmpty) {
+        final n = await Store.instance.restore(); // reinstall: bring old data back
+        if (n > 0) restored = n;
+      }
       if (mounted) setState(() => s = 2);
     } catch (e) {
       if (!mounted) return;
@@ -211,7 +217,7 @@ class _DriveSetupState extends State<DriveSetupScreen> {
               ),
               if (s == 2) ...[
                 const SizedBox(height: 12),
-                Card2(child: Column(children: [_row('Drive Folder', 'My Medical History'), _row('Sync Status', 'Everything is up to date'), _row('Access', 'Only files created by this app')])),
+                Card2(child: Column(children: [_row('Drive Folder', 'My Medical History'), _row('Sync Status', 'Everything is up to date'), _row('Backup', restored > 0 ? 'Restored $restored visits' : 'No backup found yet')])),
               ],
               const Spacer(),
               if (s == 0) Btn('Connect Google Drive', icon: Icons.cloud_upload_outlined, onTap: _connect),

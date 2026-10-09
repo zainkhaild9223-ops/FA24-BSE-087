@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../store.dart';
 import '../theme.dart';
 import '../widgets.dart';
 import 'add_record_screen.dart';
@@ -48,16 +49,16 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 16),
         Btn('+ Add Medical Visit', icon: Icons.add_circle_outline, onTap: () => go(const AddRecordScreen())),
         const SizedBox(height: 16),
-        const Row(children: [
-          Expanded(child: _Stat(Icons.medical_services_outlined, C.blueChip, C.primary, '5', 'Doctors', 'Specialists consulted')),
+        Row(children: [
+          Expanded(child: _Stat(Icons.medical_services_outlined, C.blueChip, C.primary, '${Store.instance.docs.length}', 'Doctors', 'Specialists consulted')),
           SizedBox(width: 12),
-          Expanded(child: _Stat(Icons.calendar_month_outlined, C.lav2, Color(0xFF4A56C4), '17', 'Visits', 'Recorded history')),
+          Expanded(child: _Stat(Icons.calendar_month_outlined, C.lav2, Color(0xFF4A56C4), '${Store.instance.visits.length}', 'Visits', 'Recorded history')),
         ]),
         const SizedBox(height: 12),
-        const Row(children: [
-          Expanded(child: _Stat(Icons.medication_outlined, C.mint, C.green, '28', 'Medicines', 'Active & past')),
+        Row(children: [
+          Expanded(child: _Stat(Icons.medication_outlined, C.mint, C.green, '${Store.instance.meds.length}', 'Medicines', 'Active & past')),
           SizedBox(width: 12),
-          Expanded(child: _Stat(Icons.biotech_outlined, Color(0xFF9CF0E0), Color(0xFF006A60), '12', 'Reports', 'Lab & radiology')),
+          Expanded(child: _Stat(Icons.biotech_outlined, Color(0xFF9CF0E0), Color(0xFF006A60), '${Store.instance.reps.length}', 'Reports', 'Lab & radiology')),
         ]),
         const SizedBox(height: 20),
         Card2(
@@ -99,17 +100,13 @@ class HomeScreen extends StatelessWidget {
           Text('View All', style: TextStyle(color: C.primary, fontWeight: FontWeight.w700, fontSize: 13)),
         ]),
         const SizedBox(height: 12),
-        _Visit(
-          name: 'Dr. Ahmed Khan', spec: 'Cardiologist', hospital: 'City Medical Hospital', date: '06 Oct 2026',
-          tags: const [Pill('Viral Infection', C.blueChip, C.primary), Pill('Routine Checkup', C.mint, C.green)],
-          meds: 3, tests: 2, onTap: () => go(const RecordDetailsScreen()), onName: () => go(const DoctorProfileScreen()),
-        ),
-        const SizedBox(height: 12),
-        _Visit(
-          name: 'Dr. Elena Rostova', spec: 'Dermatologist', hospital: 'Metro Skin & Wellness Clinic', date: '18 Sep 2026',
-          tags: const [Pill('Contact Dermatitis', C.blueChip, C.primary), Pill('Follow-up', C.lav2, C.ink)],
-          meds: 2, tests: 0, onTap: () => go(const RecordDetailsScreen()), onName: () {},
-        ),
+        if (Store.instance.visits.isEmpty)
+          const Card2(child: Text('Your medical history will appear here.', textAlign: TextAlign.center, style: TextStyle(color: C.muted)))
+        else
+          for (final v in Store.instance.visits.take(2)) ...[
+            _Visit(name: v.doctor, spec: '', hospital: v.hospital, date: v.date, tags: [Pill(v.dx, C.blueChip, C.primary)], meds: v.meds, tests: v.tests, onTap: () => go(const RecordDetailsScreen()), onName: () {}),
+            const SizedBox(height: 12),
+          ],
         const SizedBox(height: 24),
         const Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
           H('Your Care Team'),
@@ -165,7 +162,7 @@ class _Visit extends StatelessWidget {
             Expanded(
               child: GestureDetector(
                 onTap: onName,
-                child: Text('$name  •  $spec', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                child: Text(spec.isEmpty ? name : '$name  •  $spec', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
               ),
             ),
             Text(date, style: const TextStyle(fontSize: 12, color: C.muted)),

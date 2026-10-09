@@ -13,3 +13,9 @@
    - iOS: bundle id; put the iOS client ID in Info.plist `GIDClientID` and add the reversed client ID as a URL scheme.
 4. iOS Info.plist: `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`.
 5. Android: set `minSdkVersion 21` or higher.
+
+## Data & Drive backup
+- All data is stored locally in one JSON file (`medical_history.json` in the app documents folder).
+- Every saved visit is auto-uploaded to the signed-in user's Google Drive folder `My Medical History`.
+- After uninstall/reinstall: sign in with the same Google account -> Connect Google Drive -> data is restored automatically.
+- Settings -> Sync Now / Restore Backup do it manually.
