@@ -21,6 +21,31 @@ class _BackupSyncScreenState extends State<BackupSyncScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  Future<void> _restore() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Restore from Google Drive?'),
+        content: const Text('This replaces the data on this phone with your latest backup from Google Drive.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    String msg;
+    try {
+      final n = await Store.instance.restore();
+      msg = n < 0 ? 'No backup found in your Google Drive' : 'Restored $n visits from Google Drive';
+    } catch (e) {
+      msg = 'Restore failed: $e';
+    }
+    if (!mounted) return;
+    setState(() {});
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -47,12 +72,12 @@ class _BackupSyncScreenState extends State<BackupSyncScreen> {
             ]),
             const SizedBox(height: 8),
             Row(children: [
-              const Avatar('S', 20),
+              const MeAvatar(20),
               const SizedBox(width: 10),
-              const Expanded(
+              Expanded(
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('sarah.jenkins@gmail.com', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                  Text('● Connected • Active Sync', style: TextStyle(fontSize: 11, color: C.green, fontWeight: FontWeight.w600)),
+                  Text(Store.instance.profile['email'] ?? 'Not signed in', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+                  const Text('● Connected • Active Sync', style: TextStyle(fontSize: 11, color: C.green, fontWeight: FontWeight.w600)),
                 ]),
               ),
               TextButton(onPressed: () {}, child: const Text('Switch')),
@@ -61,40 +86,30 @@ class _BackupSyncScreenState extends State<BackupSyncScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(color: const Color(0xFFD9FBEA), borderRadius: BorderRadius.circular(12)),
-              child: const Row(children: [
-                IconBadge(Icons.check, C.green, Colors.white, 34),
+              child: Row(children: [
+                const IconBadge(Icons.check, C.green, Colors.white, 34),
                 SizedBox(width: 10),
                 Expanded(
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('Everything is up to date', style: TextStyle(fontWeight: FontWeight.w700, color: C.green)),
-                    Text('Last synchronized: Today, 10:32 AM', style: TextStyle(fontSize: 11, color: C.green)),
+                    Text(Store.instance.status == 'failed' ? 'Last sync failed' : Store.instance.status == 'syncing' ? 'Syncing...' : Store.instance.lastSynced == null ? 'Not synced yet' : 'Everything is up to date', style: const TextStyle(fontWeight: FontWeight.w700, color: C.green)),
+                    Text('Last synchronized: ${Store.instance.lastSyncedText}', style: const TextStyle(fontSize: 11, color: C.green)),
                   ]),
                 ),
               ]),
             ),
             const SizedBox(height: 14),
-            const Row(children: [
-              Expanded(child: Text('Vault Footprint', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
-              Text('24.8 MB of 15 GB Used', style: TextStyle(fontSize: 11, color: C.muted)),
+            Row(children: [
+              const Expanded(child: Text('Records in backup', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+              Text('${Store.instance.visits.length} visits • ${Store.instance.reps.length} files', style: const TextStyle(fontSize: 11, color: C.muted)),
             ]),
             const SizedBox(height: 6),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(6),
-              child: SizedBox(height: 8, child: Row(children: [
-                Expanded(flex: 50, child: Container(color: C.primary)),
-                Expanded(flex: 30, child: Container(color: C.green)),
-                Expanded(flex: 20, child: Container(color: const Color(0xFF7C86E8))),
-                Expanded(flex: 200, child: Container(color: C.lav2)),
-              ])),
-            ),
-            const SizedBox(height: 6),
-            const Wrap(spacing: 12, children: [
-              Text('● Rx Prescriptions (14%)', style: TextStyle(fontSize: 10, color: C.primary)),
-              Text('● Labs (8%)', style: TextStyle(fontSize: 10, color: C.green)),
-              Text('● Visits (4%)', style: TextStyle(fontSize: 10, color: Color(0xFF7C86E8))),
+            const Row(children: [
+              Icon(Icons.phone_android, size: 14, color: C.muted),
+              SizedBox(width: 6),
+              Expanded(child: Text('Stored on this phone (medical_history.json) and backed up to Google Drive', style: TextStyle(fontSize: 11, color: C.muted))),
             ]),
             const SizedBox(height: 12),
-            Btn(syncing ? 'Syncing...' : 'Sync Now', icon: Icons.sync, onTap: _sync),
+            Btn(syncing ? 'Backing up...' : 'Backup Now to Google Drive', icon: Icons.cloud_upload_outlined, onTap: _sync),
           ]),
         ),
         const SizedBox(height: 12),
@@ -137,9 +152,9 @@ class _BackupSyncScreenState extends State<BackupSyncScreen> {
               Text('Data Management & Recovery', style: TextStyle(fontWeight: FontWeight.w700)),
             ]),
             const SizedBox(height: 10),
-            _Action(Icons.ios_share, 'Export Complete Medical Vault', 'Encrypted ZIP package • Printable PDF Summary'),
+            _Action(Icons.cloud_upload_outlined, 'Backup Now', 'Uploads medical_history.json to your Google Drive', _sync),
             const SizedBox(height: 8),
-            _Action(Icons.restore, 'Restore From Earlier Backup', 'Select historical snapshot timestamp from Google Drive'),
+            _Action(Icons.restore, 'Restore From Google Drive', 'Replaces data on this phone with your latest Drive backup', _restore),
           ]),
         ),
         const SizedBox(height: 10),
@@ -202,20 +217,25 @@ class _Diag extends StatelessWidget {
 class _Action extends StatelessWidget {
   final IconData i;
   final String t, s;
-  const _Action(this.i, this.t, this.s);
+  final VoidCallback? onTap;
+  const _Action(this.i, this.t, this.s, [this.onTap]);
   @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(color: C.lav, borderRadius: BorderRadius.circular(10)),
-        child: Row(children: [
-          IconBadge(i, C.lav2, C.primary, 34), const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(t, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
-              Text(s, style: const TextStyle(fontSize: 10.5, color: C.muted)),
-            ]),
-          ),
-          const Icon(Icons.chevron_right, color: C.muted),
-        ]),
+  Widget build(BuildContext context) => InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: C.lav, borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            IconBadge(i, C.lav2, C.primary, 34), const SizedBox(width: 10),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(t, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                Text(s, style: const TextStyle(fontSize: 10.5, color: C.muted)),
+              ]),
+            ),
+            const Icon(Icons.chevron_right, color: C.muted),
+          ]),
+        ),
       );
 }

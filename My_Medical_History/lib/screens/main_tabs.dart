@@ -84,9 +84,9 @@ class DoctorsScreen extends StatelessWidget {
                 itemBuilder: (c, i) {
                   final d = Store.instance.docs[i];
                   return Card2(
-                    onTap: () => _go(c, const DoctorProfileScreen()),
+                    onTap: () => _go(c, DoctorProfileScreen(name: d.name)),
                     child: Row(children: [
-                      Avatar(d.name.substring(4), 28),
+                      Avatar(bare(d.name), 28),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -156,7 +156,7 @@ class _HistoryState extends State<HistoryScreen> {
                     Text(v.date, style: const TextStyle(fontWeight: FontWeight.w700, color: C.primary, fontSize: 13)),
                     const SizedBox(height: 6),
                     Card2(
-                      onTap: () => _go(c, const RecordDetailsScreen()),
+                      onTap: () => _go(c, RecordDetailsScreen(visit: Store.instance.raw[i])),
                       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(v.doctor, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                         Text(v.hospital, style: const TextStyle(fontSize: 12, color: C.muted)),
@@ -317,7 +317,9 @@ class _SearchState extends State<SearchScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final res = Store.instance.usage.where((u) => q.isNotEmpty && '${u.$1} ${u.$2} ${u.$3}'.toLowerCase().contains(q.toLowerCase())).toList();
+    final st = Store.instance;
+    final res = q.trim().isEmpty ? <(int, String)>[] : st.search(q.trim());
+    final tries = [...st.docs.map((d) => d.name), ...st.meds.map((m) => m.name)].take(6);
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.white, surfaceTintColor: Colors.transparent,
@@ -327,20 +329,18 @@ class _SearchState extends State<SearchScreen> {
           decoration: const InputDecoration(border: InputBorder.none, hintText: 'Search doctors, medicines, diagnosis, tests...', hintStyle: TextStyle(fontSize: 14, color: C.muted)),
         ),
       ),
-      body: q.isEmpty
+      body: q.trim().isEmpty
           ? Padding(
               padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Suggestions', style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  for (final s in ['Doctors', 'Medicines', 'Diagnoses', 'Hospitals', 'Tests']) Chip(label: Text(s), backgroundColor: C.lav2, side: BorderSide.none),
-                ]),
-                const SizedBox(height: 16),
-                const Text('Try searching', style: TextStyle(fontWeight: FontWeight.w700)),
-                const SizedBox(height: 8),
-                ActionChip(label: const Text('Panadol'), avatar: const Icon(Icons.history, size: 16), onPressed: () => setState(() { ctrl.text = 'Panadol'; q = 'Panadol'; })),
-              ]),
+              child: tries.isEmpty
+                  ? const Text('Add a visit first, then you can search it here.', style: TextStyle(color: C.muted))
+                  : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('Try searching', style: TextStyle(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 8),
+                      Wrap(spacing: 8, runSpacing: 8, children: [
+                        for (final s in tries) ActionChip(label: Text(s), onPressed: () => setState(() { ctrl.text = s; q = s; })),
+                      ]),
+                    ]),
             )
           : res.isEmpty
               ? const EmptyState(Icons.search_off, 'No results found.')
@@ -348,14 +348,17 @@ class _SearchState extends State<SearchScreen> {
                   padding: const EdgeInsets.all(16),
                   itemCount: res.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (c, i) => Card2(
-                    onTap: () => _go(c, const RecordDetailsScreen()),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(res[i].$1, style: const TextStyle(color: C.primary, fontWeight: FontWeight.w700, fontSize: 13)),
-                      Text(res[i].$2, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-                      Text(res[i].$3, style: const TextStyle(color: C.muted)),
-                    ]),
-                  ),
+                  itemBuilder: (c, i) {
+                    final v = st.raw[res[i].$1];
+                    return Card2(
+                      onTap: () => _go(c, RecordDetailsScreen(visit: v)),
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text('${v['date']}', style: const TextStyle(color: C.primary, fontWeight: FontWeight.w700, fontSize: 13)),
+                        Text('${v['doctor']}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+                        Text(res[i].$2, style: const TextStyle(color: C.muted)),
+                      ]),
+                    );
+                  },
                 ),
     );
   }
@@ -434,6 +437,18 @@ class _SettingsState extends State<SettingsScreen> {
   }
 
   Future<void> _restore() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('Restore from Google Drive?'),
+        content: const Text('This replaces the data on this phone with your latest Drive backup.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('Restore')),
+        ],
+      ),
+    );
+    if (ok != true) return;
     try {
       final n = await Store.instance.restore();
       if (mounted) _msg(n < 0 ? 'No backup found in your Google Drive' : 'Restored $n visits from Google Drive');
@@ -461,10 +476,25 @@ class _SettingsState extends State<SettingsScreen> {
   Widget build(BuildContext context) => SafeArea(
         child: ListView(padding: const EdgeInsets.all(16), children: [
           const Text('Settings', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
-          _group('ACCOUNT', [_tile(Icons.person_outline, 'Profile', sub: 'Sarah Jenkins'), _tile(Icons.account_circle_outlined, 'Google Account', sub: 'sarah.jenkins@gmail.com')]),
+          const SizedBox(height: 14),
+          Card2(
+            child: Row(children: [
+              const MeAvatar(30),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(Store.instance.profile['name'] ?? 'Not signed in', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                  Text(Store.instance.profile['email'] ?? '', style: const TextStyle(fontSize: 13, color: C.muted)),
+                  const SizedBox(height: 6),
+                  const Pill('Google account', C.lav2, C.ink, icon: Icons.verified_user_outlined),
+                ]),
+              ),
+            ]),
+          ),
+          _group('ACCOUNT', [_tile(Icons.account_circle_outlined, 'Google Account', sub: Store.instance.profile['email'] ?? 'Not signed in')]),
           _group('BACKUP & SYNC', [
             _tile(Icons.cloud_outlined, 'Google Drive', sub: 'Connected', onTap: () => _go(context, Scaffold(appBar: topBar(context, 'Backup & Sync', 'My Medical History'), body: const BackupSyncScreen()))),
-            _tile(Icons.sync, 'Sync Now', onTap: _sync),
+            _tile(Icons.cloud_upload_outlined, 'Backup Now to Google Drive', onTap: _sync),
             _tile(Icons.autorenew, 'Auto Sync', trailing: _sw(auto, (v) => setState(() => auto = v))),
             _tile(Icons.schedule, 'Last Synced', sub: Store.instance.lastSyncedText, trailing: const SizedBox()),
           ]),

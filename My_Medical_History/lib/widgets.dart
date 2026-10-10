@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'store.dart';
 import 'theme.dart';
 
 class Card2 extends StatelessWidget {
@@ -71,17 +72,31 @@ class IconBadge extends StatelessWidget {
       );
 }
 
-// Replace with Image.asset / NetworkImage when you have real photos.
+String bare(String n) => n.replaceFirst(RegExp(r'^Dr\.?\s*', caseSensitive: false), '');
+
 class Avatar extends StatelessWidget {
   final String name;
   final double r;
-  const Avatar(this.name, this.r, {super.key});
+  final String? photo;
+  const Avatar(this.name, this.r, {super.key, this.photo});
   @override
-  Widget build(BuildContext context) => CircleAvatar(
-        radius: r,
-        backgroundColor: C.blueChip,
-        child: Text(name[0], style: TextStyle(color: C.primary, fontWeight: FontWeight.w700, fontSize: r * 0.8)),
-      );
+  Widget build(BuildContext context) {
+    final hasPhoto = photo != null && photo!.isNotEmpty;
+    return CircleAvatar(
+      radius: r,
+      backgroundColor: C.blueChip,
+      backgroundImage: hasPhoto ? NetworkImage(photo!) : null,
+      child: hasPhoto ? null : Text(name.isEmpty ? '?' : name[0].toUpperCase(), style: TextStyle(color: C.primary, fontWeight: FontWeight.w700, fontSize: r * 0.8)),
+    );
+  }
+}
+
+/// The signed-in user's own Google profile picture / initial.
+class MeAvatar extends StatelessWidget {
+  final double r;
+  const MeAvatar(this.r, {super.key});
+  @override
+  Widget build(BuildContext context) => Avatar(Store.instance.profile['name'] ?? '', r, photo: Store.instance.profile['photo']);
 }
 
 class Btn extends StatelessWidget {
@@ -124,5 +139,5 @@ PreferredSizeWidget topBar(BuildContext c, String title, String sub) => AppBar(
         Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
         Text(sub, style: const TextStyle(fontSize: 11, color: C.primary, fontWeight: FontWeight.w600)),
       ]),
-      actions: const [Padding(padding: EdgeInsets.only(right: 16), child: Avatar('Sarah', 16))],
+      actions: const [Padding(padding: EdgeInsets.only(right: 16), child: MeAvatar(16))],
     );

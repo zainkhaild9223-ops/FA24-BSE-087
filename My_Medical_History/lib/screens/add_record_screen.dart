@@ -17,7 +17,8 @@ class _MedForm {
 }
 
 class AddRecordScreen extends StatefulWidget {
-  const AddRecordScreen({super.key});
+  final String? doctorName;
+  const AddRecordScreen({super.key, this.doctorName});
   @override
   State<AddRecordScreen> createState() => _AddRecordState();
 }
@@ -31,6 +32,21 @@ class _AddRecordState extends State<AddRecordScreen> {
   final tests = <List<TextEditingController>>[];
   final files = <Map<String, dynamic>>[];
   bool saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final n = widget.doctorName;
+    if (n == null) return;
+    for (final d in Store.instance.docs) {
+      if (d.name == n) {
+        doctor.text = d.name;
+        spec.text = d.spec;
+        phone.text = d.phone;
+        hospital.text = d.hospital;
+      }
+    }
+  }
 
   void _snack(String m) => ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(m)));
 

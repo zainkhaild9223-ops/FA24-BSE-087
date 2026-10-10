@@ -16,7 +16,7 @@ class _SplashState extends State<SplashScreen> {
   void initState() {
     super.initState();
     Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const OnboardingScreen()));
+      if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => Store.instance.profile.isNotEmpty ? const Shell() : const OnboardingScreen()));
     });
   }
 
@@ -127,6 +127,7 @@ class SignInScreen extends StatelessWidget {
                   onPressed: () async {
                     try {
                       final u = await DriveService.instance.signIn();
+                      if (u != null) await Store.instance.setProfile(u.displayName ?? '', u.email, u.photoUrl);
                       if (u != null && context.mounted) Navigator.push(context, MaterialPageRoute(builder: (_) => const DriveSetupScreen()));
                     } catch (e) {
                       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Sign-in failed: $e')));
@@ -204,11 +205,12 @@ class _DriveSetupState extends State<DriveSetupScreen> {
               const SizedBox(height: 20),
               Card2(
                 child: Row(children: [
-                  Avatar(DriveService.instance.user?.email ?? 'S', 20),
+                  const MeAvatar(20),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(DriveService.instance.user?.email ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text(Store.instance.profile['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text(Store.instance.profile['email'] ?? '', style: const TextStyle(fontSize: 12, color: C.muted)),
                       Text(s == 2 ? '● Connected' : 'Google account', style: TextStyle(fontSize: 12, color: s == 2 ? C.green : C.muted, fontWeight: FontWeight.w600)),
                     ]),
                   ),

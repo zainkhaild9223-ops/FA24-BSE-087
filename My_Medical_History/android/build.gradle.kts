@@ -15,6 +15,28 @@ subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
 }
+
+// Force every plugin to compile against Android API 36
+subprojects {
+    afterEvaluate {
+        val androidExt = extensions.findByName("android")
+        if (androidExt != null) {
+            try {
+                androidExt.javaClass
+                    .getMethod("setCompileSdk", Int::class.javaObjectType)
+                    .invoke(androidExt, 36)
+            } catch (e: Exception) {
+                try {
+                    androidExt.javaClass
+                        .getMethod("compileSdkVersion", Int::class.javaPrimitiveType)
+                        .invoke(androidExt, 36)
+                } catch (e2: Exception) {
+                }
+            }
+        }
+    }
+}
+
 subprojects {
     project.evaluationDependsOn(":app")
 }

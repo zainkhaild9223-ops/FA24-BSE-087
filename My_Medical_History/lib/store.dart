@@ -5,6 +5,17 @@ import 'package:path_provider/path_provider.dart';
 import 'data.dart';
 import 'drive_service.dart';
 
+const _mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+DateTime? parseDate(String s) {
+  final p = s.split(' ');
+  if (p.length != 3) return null;
+  final m = _mon.indexOf(p[1]);
+  final d = int.tryParse(p[0]);
+  final y = int.tryParse(p[2]);
+  if (m < 0 || d == null || y == null) return null;
+  return DateTime(y, m + 1, d);
+}
+
 String _s(Map v, String k) => '${v[k] ?? ''}';
 List _l(Map v, String k) => (v[k] as List?) ?? const [];
 
@@ -18,6 +29,7 @@ class Store extends ChangeNotifier {
   List<Map<String, dynamic>> _visits = []; // newest first
   DateTime? lastSynced;
   String status = 'idle'; // idle | syncing | done | failed | signedout
+  Map<String, String> profile = {}; // signed-in Google user (name, email, photo)
 
   bool get isEmpty => _visits.isEmpty;
 
@@ -34,6 +46,10 @@ class Store extends ChangeNotifier {
     try {
       final f = await _file();
       if (await f.exists()) _fromJson(jsonDecode(await f.readAsString()));
+    } catch (_) {}
+    try {
+      final pf = File('${(await getApplicationDocumentsDirectory()).path}/profile.json');
+      if (await pf.exists()) profile = Map<String, String>.from(jsonDecode(await pf.readAsString()) as Map);
     } catch (_) {}
     notifyListeners();
   }
@@ -62,6 +78,8 @@ class Store extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    final u = DriveService.instance.user;
+    if (u != null) await setProfile(u.displayName ?? '', u.email, u.photoUrl);
     await syncNow();
   }
 
@@ -91,6 +109,82 @@ class Store extends ChangeNotifier {
     status = 'done';
     notifyListeners();
     return _visits.length;
+  }
+
+  // ---- profile / raw access ----
+  String get firstName => (profile['name'] ?? '').trim().split(' ').first;
+
+  Future<void> setProfile(String name, String email, String? photo) async {
+    profile = {'name': name.isEmpty ? email.split('@').first : name, 'email': email, 'photo': photo ?? ''};
+    try {
+      await File('${(await getApplicationDocumentsDirectory()).path}/profile.json').writeAsString(jsonEncode(profile));
+    } catch (_) {}
+    notifyListeners();
+  }
+
+  List<Map<String, dynamic>> get raw => _visits;
+
+  Future<void> deleteVisit(String id) async {
+    _visits.removeWhere((v) => '${v['id']}' == id);
+    await _save();
+    notifyListeners();
+    autoSync();
+  }
+
+  /// Nearest follow-up date that is today or in the future.
+  Map<String, String>? get upcoming {
+    final now = DateTime.now();
+    final t0 = DateTime(now.year, now.month, now.day);
+    Map<String, dynamic>? best;
+    DateTime? bd;
+    for (final v in _visits) {
+      final d = parseDate(_s(v, 'followUp'));
+      if (d == null || d.isBefore(t0)) continue;
+      if (bd == null || d.isBefore(bd)) {
+        bd = d;
+        best = v;
+      }
+    }
+    if (best == null || bd == null) return null;
+    final n = bd.difference(t0).inDays;
+    return {
+      'doctor': _s(best, 'doctor'), 'spec': _s(best, 'spec'), 'hospital': _s(best, 'hospital'), 'date': _s(best, 'followUp'),
+      'in': n == 0 ? 'Today' : n == 1 ? 'Tomorrow' : 'In $n days',
+    };
+  }
+
+  /// Search doctors, diagnosis, hospitals, medicines and tests. Returns (visit index, what matched).
+  List<(int, String)> search(String q) {
+    final k = q.toLowerCase();
+    final out = <(int, String)>[];
+    for (var i = 0; i < _visits.length; i++) {
+      final v = _visits[i];
+      String? hit;
+      if (_s(v, 'doctor').toLowerCase().contains(k)) {
+        hit = _s(v, 'doctor');
+      } else if (_s(v, 'dx').toLowerCase().contains(k)) {
+        hit = 'Diagnosis: ${_s(v, 'dx')}';
+      } else if (_s(v, 'hospital').toLowerCase().contains(k)) {
+        hit = _s(v, 'hospital');
+      } else {
+        for (final m in _l(v, 'meds')) {
+          if (_s(m as Map, 'name').toLowerCase().contains(k)) {
+            hit = '${_s(m, 'name')} ${_s(m, 'dose')}'.trim();
+            break;
+          }
+        }
+        if (hit == null) {
+          for (final t in _l(v, 'tests')) {
+            if (_s(t as Map, 'name').toLowerCase().contains(k)) {
+              hit = 'Test: ${_s(t, 'name')}';
+              break;
+            }
+          }
+        }
+      }
+      if (hit != null) out.add((i, hit));
+    }
+    return out;
   }
 
   // ---- views used by the existing screens ----

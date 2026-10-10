@@ -7,7 +7,8 @@ import 'screens/main_tabs.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Store.instance.load(); // read local JSON file
+  await Store.instance.load(); // read local JSON file + saved Google profile
+  if (Store.instance.profile.isNotEmpty) Store.instance.autoSync(); // silent background sync
   runApp(const MedicalHistoryApp());
 }
 
