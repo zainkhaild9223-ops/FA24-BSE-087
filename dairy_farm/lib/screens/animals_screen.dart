@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../common.dart';
 import '../db/database_helper.dart';
@@ -109,9 +112,13 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
       onTap: () => _openForm(a),
       child: Row(children: [
         CircleAvatar(
+          radius: 26,
           backgroundColor: sold ? Colors.grey.shade200 : kLightGreen,
-          child: Icon(a.type == 'Cow' ? Icons.pets : Icons.cruelty_free,
-              color: sold ? Colors.grey : kGreen),
+          backgroundImage: a.photo != null ? MemoryImage(a.photo!) : null,
+          child: a.photo != null
+              ? null
+              : Icon(a.type == 'Cow' ? Icons.pets : Icons.cruelty_free,
+                  color: sold ? Colors.grey : kGreen),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -176,6 +183,7 @@ class _AnimalFormScreenState extends State<AnimalFormScreen> {
   String _type = 'Cow';
   String _status = 'Active';
   String? _tagError;
+  Uint8List? _photo;
 
   @override
   void initState() {
@@ -187,6 +195,51 @@ class _AnimalFormScreenState extends State<AnimalFormScreen> {
     _dob = TextEditingController(text: a?.dob ?? '');
     _type = a?.type ?? 'Cow';
     _status = a?.status ?? 'Active';
+    _photo = a?.photo;
+  }
+
+  Future<void> _pickPhoto() async {
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (_) => SafeArea(
+        child: Wrap(children: [
+          ListTile(
+            leading: const Icon(Icons.photo_camera, color: kGreen),
+            title: const Text('Take a photo'),
+            onTap: () => Navigator.pop(context, ImageSource.camera),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_library, color: kGreen),
+            title: const Text('Choose from gallery'),
+            onTap: () => Navigator.pop(context, ImageSource.gallery),
+          ),
+          if (_photo != null)
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: kRed),
+              title: const Text('Remove photo'),
+              onTap: () {
+                Navigator.pop(context);
+                setState(() => _photo = null);
+              },
+            ),
+        ]),
+      ),
+    );
+    if (source == null) return;
+    try {
+      // Chhoti size + compression, taake database aur Drive backup halka rahe
+      final x = await ImagePicker().pickImage(
+        source: source,
+        maxWidth: 600,
+        maxHeight: 600,
+        imageQuality: 70,
+      );
+      if (x == null) return;
+      final bytes = await x.readAsBytes();
+      if (mounted) setState(() => _photo = bytes);
+    } catch (e) {
+      if (mounted) snack(context, 'Could not load photo: $e', error: true);
+    }
   }
 
   Future<void> _save() async {
@@ -200,6 +253,7 @@ class _AnimalFormScreenState extends State<AnimalFormScreen> {
       breed: _breed.text.trim(),
       dob: _dob.text.trim(),
       status: _status,
+      photo: _photo,
     );
     try {
       if (a.id == null) {
@@ -223,6 +277,36 @@ class _AnimalFormScreenState extends State<AnimalFormScreen> {
       body: Form(
         key: _form,
         child: ListView(padding: const EdgeInsets.all(16), children: [
+          Center(
+            child: GestureDetector(
+              onTap: _pickPhoto,
+              child: Stack(children: [
+                CircleAvatar(
+                  radius: 56,
+                  backgroundColor: kLightGreen,
+                  backgroundImage: _photo != null ? MemoryImage(_photo!) : null,
+                  child: _photo != null
+                      ? null
+                      : const Icon(Icons.pets, size: 44, color: kGreen),
+                ),
+                Positioned(
+                  right: 0,
+                  bottom: 0,
+                  child: CircleAvatar(
+                    radius: 18,
+                    backgroundColor: kGreen,
+                    child: const Icon(Icons.camera_alt, size: 18, color: Colors.white),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Center(
+            child: Text('Tap to add animal photo',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
+          ),
+          const SizedBox(height: 14),
           TextFormField(
             controller: _tag,
             decoration: const InputDecoration(

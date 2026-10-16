@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 class Animal {
   final int? id;
   final String tagNo;
@@ -6,6 +8,7 @@ class Animal {
   final String breed;
   final String dob;
   final String status; // Active / Sold
+  final Uint8List? photo; // chhoti compressed image (SQLite BLOB)
 
   Animal({
     this.id,
@@ -15,6 +18,7 @@ class Animal {
     this.breed = '',
     this.dob = '',
     this.status = 'Active',
+    this.photo,
   });
 
   Map<String, dynamic> toMap() => {
@@ -25,6 +29,7 @@ class Animal {
         'breed': breed,
         'dob': dob,
         'status': status,
+        'photo': photo,
       };
 
   factory Animal.fromMap(Map<String, dynamic> m) => Animal(
@@ -35,6 +40,7 @@ class Animal {
         breed: (m['breed'] ?? '') as String,
         dob: (m['dob'] ?? '') as String,
         status: (m['status'] ?? 'Active') as String,
+        photo: m['photo'] as Uint8List?,
       );
 }
 

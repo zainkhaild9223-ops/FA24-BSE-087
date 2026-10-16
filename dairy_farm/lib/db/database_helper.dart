@@ -39,14 +39,15 @@ class DatabaseHelper {
     final path = await dbPath;
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, v) async {
         await db.execute('''CREATE TABLE animals(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           tag_no TEXT UNIQUE NOT NULL,
           name TEXT, type TEXT, breed TEXT, dob TEXT,
-          status TEXT DEFAULT 'Active')''');
+          status TEXT DEFAULT 'Active',
+          photo BLOB)''');
         await db.execute('''CREATE TABLE milk_records(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           animal_id INTEGER NOT NULL,
@@ -60,6 +61,12 @@ class DatabaseHelper {
         await db.execute('''CREATE TABLE sales(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           date TEXT NOT NULL, liters REAL, rate REAL, total REAL, buyer TEXT)''');
+      },
+      // Purani database (version 1) mein photo column add karta hai, data safe rehta hai
+      onUpgrade: (db, oldV, newV) async {
+        if (oldV < 2) {
+          await db.execute('ALTER TABLE animals ADD COLUMN photo BLOB');
+        }
       },
     );
   }

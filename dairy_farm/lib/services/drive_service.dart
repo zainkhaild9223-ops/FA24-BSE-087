@@ -22,7 +22,7 @@ class DriveService {
   static const folderName = 'Dairy Farm Backups';
 
   final GoogleSignIn _signIn =
-  GoogleSignIn(scopes: [drive.DriveApi.driveFileScope]);
+      GoogleSignIn(scopes: [drive.DriveApi.driveFileScope]);
 
   GoogleSignInAccount? get account => _signIn.currentUser;
 
@@ -89,11 +89,11 @@ class DriveService {
     );
     return (res.files ?? [])
         .map((f) => BackupFile(
-      f.id!,
-      f.name ?? 'backup',
-      f.createdTime?.toLocal(),
-      int.tryParse(f.size ?? '0') ?? 0,
-    ))
+              f.id!,
+              f.name ?? 'backup',
+              f.createdTime?.toLocal(),
+              int.tryParse(f.size ?? '0') ?? 0,
+            ))
         .toList();
   }
 
