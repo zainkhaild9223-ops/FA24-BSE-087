@@ -96,7 +96,7 @@ class _BackupScreenState extends State<BackupScreen> {
           ElevatedButton.icon(
             onPressed: _user == null || _busy
                 ? null
-                : () => _run('Uploading backup...', _drive.backup, 'Backup uploaded to Google Drive'),
+                : () => _run('Uploading backup...', _drive.backup, 'Backup done. Database and Google Sheets updated in "Dairy Farm Backups"'),
             icon: const Icon(Icons.cloud_upload_outlined),
             label: const Text('Backup to Google Drive Now'),
           ),

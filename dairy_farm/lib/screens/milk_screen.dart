@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../common.dart';
 import '../db/database_helper.dart';
 import '../models.dart';
+import 'milk_plan_screen.dart';
 
 class MilkScreen extends StatefulWidget {
   const MilkScreen({super.key});
@@ -48,7 +49,20 @@ class _MilkScreenState extends State<MilkScreen> {
   Widget build(BuildContext context) {
     final isToday = fmtDate(_date) == todayStr();
     return Scaffold(
-      appBar: AppBar(title: const Text('Milk Records')),
+      appBar: AppBar(
+        title: const Text('Milk Records'),
+        actions: [
+          IconButton(
+            tooltip: 'Monthly milk plan',
+            icon: const Icon(Icons.event_repeat),
+            onPressed: () async {
+              await Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const MilkPlanScreen()));
+              _reload();
+            },
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openForm(),
         child: const Icon(Icons.add),
@@ -117,8 +131,23 @@ class _MilkScreenState extends State<MilkScreen> {
           const SizedBox(width: 12),
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(r.animalName ?? '-',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              Row(children: [
+                Flexible(
+                  child: Text(r.animalName ?? '-',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                ),
+                if (r.auto)
+                  Container(
+                    margin: const EdgeInsets.only(left: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3E0),
+                        borderRadius: BorderRadius.circular(8)),
+                    child: const Text('Plan',
+                        style: TextStyle(fontSize: 11, color: Color(0xFFE65100))),
+                  ),
+              ]),
               Text('Tag: ${r.tagNo ?? '-'}',
                   style: const TextStyle(color: Colors.grey, fontSize: 12)),
               const SizedBox(height: 4),
@@ -131,9 +160,12 @@ class _MilkScreenState extends State<MilkScreen> {
                 style: const TextStyle(
                     fontWeight: FontWeight.bold, fontSize: 16, color: kGreen)),
           ]),
-          IconButton(
-              onPressed: () => _delete(r),
-              icon: const Icon(Icons.delete_outline, color: kRed)),
+          if (!r.auto)
+            IconButton(
+                onPressed: () => _delete(r),
+                icon: const Icon(Icons.delete_outline, color: kRed))
+          else
+            const SizedBox(width: 8),
         ]),
       );
 }

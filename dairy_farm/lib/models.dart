@@ -52,6 +52,7 @@ class MilkRecord {
   final double evening;
   final String? animalName; // from JOIN
   final String? tagNo; // from JOIN
+  final bool auto; // true = monthly plan se khud bana record (database mein nahi)
 
   MilkRecord({
     this.id,
@@ -61,6 +62,7 @@ class MilkRecord {
     required this.evening,
     this.animalName,
     this.tagNo,
+    this.auto = false,
   });
 
   double get total => morning + evening;
@@ -148,5 +150,50 @@ class Sale {
         liters: (m['liters'] as num).toDouble(),
         rate: (m['rate'] as num).toDouble(),
         buyer: (m['buyer'] ?? '') as String,
+      );
+}
+
+/// Ek animal ka monthly fixed daily milk. [fromDate] se mahine ke aakhir tak
+/// har din itna milk count hota hai (jab tak us din ki apni entry na ho).
+class MilkPlan {
+  final int? id;
+  final int animalId;
+  final String month; // yyyy-MM
+  final String fromDate; // yyyy-MM-dd
+  final double morning;
+  final double evening;
+  final String? animalName;
+  final String? tagNo;
+
+  MilkPlan({
+    this.id,
+    required this.animalId,
+    required this.month,
+    required this.fromDate,
+    required this.morning,
+    required this.evening,
+    this.animalName,
+    this.tagNo,
+  });
+
+  double get total => morning + evening;
+
+  Map<String, dynamic> toMap() => {
+        'animal_id': animalId,
+        'month': month,
+        'from_date': fromDate,
+        'morning': morning,
+        'evening': evening,
+      };
+
+  factory MilkPlan.fromMap(Map<String, dynamic> m) => MilkPlan(
+        id: m['id'] as int?,
+        animalId: m['animal_id'] as int,
+        month: m['month'] as String,
+        fromDate: m['from_date'] as String,
+        morning: (m['morning'] as num).toDouble(),
+        evening: (m['evening'] as num).toDouble(),
+        animalName: m['animal_name'] as String?,
+        tagNo: m['tag_no'] as String?,
       );
 }

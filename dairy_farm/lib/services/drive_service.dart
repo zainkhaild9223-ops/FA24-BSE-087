@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
@@ -6,6 +7,7 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:intl/intl.dart';
 
 import '../db/database_helper.dart';
+import 'report_service.dart';
 
 class BackupFile {
   final String id;
@@ -15,11 +17,18 @@ class BackupFile {
   BackupFile(this.id, this.name, this.created, this.size);
 }
 
-/// Backups Drive ke My Drive mein "Dairy Farm Backups" folder mein jate hain.
-/// Scope drive.file: app sirf wohi files dekh sakti hai jo usne khud banayi hon,
-/// user ki baqi Drive files tak access nahi hoti.
+/// Drive ke My Drive mein "Dairy Farm Backups" folder:
+///   - dairy_backup_*.db            (restore ke liye database)
+///   - Dairy Farm - Animals         (Google Sheet: tag, name, photo link, status, milk)
+///   - Dairy Farm - Milk Records    (Google Sheet: date-wise milk)
+///   - Photos/                      (animals ki photos)
+/// Scope drive.file: app sirf wohi files dekh sakti hai jo usne khud banayi hon.
 class DriveService {
   static const folderName = 'Dairy Farm Backups';
+  static const animalsSheetName = 'Dairy Farm - Animals';
+  static const milkSheetName = 'Dairy Farm - Milk Records';
+  static const _folderMime = 'application/vnd.google-apps.folder';
+  static const _sheetMime = 'application/vnd.google-apps.spreadsheet';
 
   final GoogleSignIn _signIn =
       GoogleSignIn(scopes: [drive.DriveApi.driveFileScope]);
@@ -38,11 +47,13 @@ class DriveService {
     return drive.DriveApi(client);
   }
 
-  /// "Dairy Farm Backups" folder dhoondta hai, na mile to bana deta hai.
-  Future<String> _folderId(drive.DriveApi api) async {
+  /// Folder dhoondta hai, na mile to bana deta hai.
+  Future<String> _folder(drive.DriveApi api, String name, {String? parent}) async {
+    final q = StringBuffer(
+        "mimeType='$_folderMime' and name='$name' and trashed=false");
+    if (parent != null) q.write(" and '$parent' in parents");
     final res = await api.files.list(
-      q: "mimeType='application/vnd.google-apps.folder' "
-          "and name='$folderName' and trashed=false",
+      q: q.toString(),
       spaces: 'drive',
       $fields: 'files(id)',
     );
@@ -51,17 +62,59 @@ class DriveService {
     }
     final folder = await api.files.create(
       drive.File()
-        ..name = folderName
-        ..mimeType = 'application/vnd.google-apps.folder',
+        ..name = name
+        ..mimeType = _folderMime
+        ..parents = parent == null ? null : [parent],
       $fields: 'id',
     );
     return folder.id!;
   }
 
-  /// Local dairy.db file ko Drive par upload karta hai.
+  /// Same naam ki file ho to update karta hai, warna nayi banata hai.
+  /// [convertTo] dene par (jaise Google Sheet) upload ki hui CSV convert ho jati hai.
+  /// Drive ka webViewLink wapas deta hai.
+  Future<String?> _upsert(
+    drive.DriveApi api, {
+    required String name,
+    required String parent,
+    required List<int> bytes,
+    required String contentType,
+    String? convertTo,
+  }) async {
+    drive.Media media() =>
+        drive.Media(Stream.value(bytes), bytes.length, contentType: contentType);
+
+    final existing = await api.files.list(
+      q: "name='$name' and '$parent' in parents and trashed=false",
+      spaces: 'drive',
+      $fields: 'files(id)',
+    );
+    if (existing.files != null && existing.files!.isNotEmpty) {
+      final id = existing.files!.first.id!;
+      try {
+        final f = await api.files
+            .update(drive.File(), id, uploadMedia: media(), $fields: 'id,webViewLink');
+        return f.webViewLink;
+      } catch (_) {
+        // update na ho saka to purani file hata kar nayi bana do
+        await api.files.delete(id);
+      }
+    }
+    final meta = drive.File()
+      ..name = name
+      ..parents = [parent];
+    if (convertTo != null) meta.mimeType = convertTo;
+    final f = await api.files
+        .create(meta, uploadMedia: media(), $fields: 'id,webViewLink');
+    return f.webViewLink;
+  }
+
+  String _safe(String s) => s.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_');
+
+  /// Database file + Google Sheets (animals, milk) + photos Drive par upload.
   Future<void> backup() async {
     final api = await _api();
-    final folderId = await _folderId(api);
+    final folderId = await _folder(api, folderName);
     final path = await DatabaseHelper.instance.dbPath;
 
     // File copy karne se pehle DB band karo (data poori tarah file mein likha jaye)
@@ -75,13 +128,63 @@ class DriveService {
       ..parents = [folderId];
     final media = drive.Media(Stream.value(bytes), bytes.length);
     await api.files.create(meta, uploadMedia: media);
+
+    // Ab Google Sheets (DB agli query par khud dobara khul jata hai)
+    try {
+      await _exportSheets(api, folderId);
+    } catch (e) {
+      throw Exception(
+          'Database backup uploaded, but Google Sheet export failed: $e');
+    }
   }
 
+  Future<void> _exportSheets(drive.DriveApi api, String folderId) async {
+    final photosId = await _folder(api, 'Photos', parent: folderId);
+
+    // 1) Animals ki photos upload karke har ek ka link lo
+    final animals = await DatabaseHelper.instance.getAnimals();
+    final links = <int, String>{};
+    for (final a in animals) {
+      if (a.photo == null || a.id == null) continue;
+      final link = await _upsert(
+        api,
+        name: '${_safe(a.tagNo)}.jpg',
+        parent: photosId,
+        bytes: a.photo!,
+        contentType: 'image/jpeg',
+      );
+      if (link != null) links[a.id!] = link;
+    }
+
+    // 2) Animals sheet
+    final animalsCsv = await ReportService.animalsCsv(links);
+    await _upsert(
+      api,
+      name: animalsSheetName,
+      parent: folderId,
+      bytes: utf8.encode(animalsCsv),
+      contentType: 'text/csv',
+      convertTo: _sheetMime,
+    );
+
+    // 3) Milk records sheet
+    final milkCsv = await ReportService.milkCsv();
+    await _upsert(
+      api,
+      name: milkSheetName,
+      parent: folderId,
+      bytes: utf8.encode(milkCsv),
+      contentType: 'text/csv',
+      convertTo: _sheetMime,
+    );
+  }
+
+  /// Sirf .db backups ki list (Sheets aur Photos list mein nahi aate).
   Future<List<BackupFile>> listBackups() async {
     final api = await _api();
-    final folderId = await _folderId(api);
+    final folderId = await _folder(api, folderName);
     final res = await api.files.list(
-      q: "'$folderId' in parents and trashed=false",
+      q: "'$folderId' in parents and trashed=false and name contains 'dairy_backup_'",
       spaces: 'drive',
       orderBy: 'createdTime desc',
       pageSize: 20,
