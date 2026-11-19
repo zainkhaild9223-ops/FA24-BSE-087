@@ -27,16 +27,14 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
   static const dbName = 'dairy.db';
 
-  // Monthly milk plan: animal ka fixed daily milk, mahine ke hisab se
+  // Monthly milk plan: poore farm ka fixed daily milk, mahine ke hisab se
   static const _planTableSql = '''CREATE TABLE IF NOT EXISTS milk_plans(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    animal_id INTEGER NOT NULL,
     month TEXT NOT NULL,
     from_date TEXT NOT NULL,
     morning REAL DEFAULT 0,
     evening REAL DEFAULT 0,
-    UNIQUE(animal_id, from_date),
-    FOREIGN KEY(animal_id) REFERENCES animals(id) ON DELETE CASCADE)''';
+    UNIQUE(month, from_date))''';
 
   String _todayStr() {
     final n = DateTime.now();
@@ -56,7 +54,7 @@ class DatabaseHelper {
     final path = await dbPath;
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, v) async {
         await db.execute('''CREATE TABLE animals(
@@ -65,13 +63,12 @@ class DatabaseHelper {
           name TEXT, type TEXT, breed TEXT, dob TEXT,
           status TEXT DEFAULT 'Active',
           photo BLOB)''');
+        // Milk ab day-wise hai: har date ki sirf aik entry (poore farm ka total)
         await db.execute('''CREATE TABLE milk_records(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          animal_id INTEGER NOT NULL,
-          date TEXT NOT NULL,
+          date TEXT NOT NULL UNIQUE,
           morning REAL DEFAULT 0,
-          evening REAL DEFAULT 0,
-          FOREIGN KEY(animal_id) REFERENCES animals(id) ON DELETE CASCADE)''');
+          evening REAL DEFAULT 0)''');
         await db.execute('''CREATE TABLE expenses(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           date TEXT NOT NULL, category TEXT, amount REAL, note TEXT)''');
@@ -80,13 +77,40 @@ class DatabaseHelper {
           date TEXT NOT NULL, liters REAL, rate REAL, total REAL, buyer TEXT)''');
         await db.execute(_planTableSql);
       },
-      // Purani database (version 1) mein photo column add karta hai, data safe rehta hai
+      // Purani database mein photo column add karta hai, data safe rehta hai
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
           await db.execute('ALTER TABLE animals ADD COLUMN photo BLOB');
         }
         if (oldV < 3) {
           await db.execute(_planTableSql);
+        }
+        if (oldV < 4) {
+          // Purana per-animal milk -> day-wise total (har date ka sum).
+          // Kisi din ka total wahi rehta hai, sirf cow-wise tafseel khatam hoti hai.
+          await db.execute('''CREATE TABLE milk_records_new(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL UNIQUE,
+            morning REAL DEFAULT 0,
+            evening REAL DEFAULT 0)''');
+          await db.execute('''INSERT INTO milk_records_new(date, morning, evening)
+            SELECT date, SUM(morning), SUM(evening)
+            FROM milk_records GROUP BY date''');
+          await db.execute('DROP TABLE milk_records');
+          await db.execute('ALTER TABLE milk_records_new RENAME TO milk_records');
+          // Purane per-animal plans -> farm-wide plan (har from_date ka sum)
+          await db.execute('''CREATE TABLE milk_plans_new(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            month TEXT NOT NULL,
+            from_date TEXT NOT NULL,
+            morning REAL DEFAULT 0,
+            evening REAL DEFAULT 0,
+            UNIQUE(month, from_date))''');
+          await db.execute('''INSERT INTO milk_plans_new(month, from_date, morning, evening)
+            SELECT month, from_date, SUM(morning), SUM(evening)
+            FROM milk_plans GROUP BY month, from_date''');
+          await db.execute('DROP TABLE milk_plans');
+          await db.execute('ALTER TABLE milk_plans_new RENAME TO milk_plans');
         }
       },
     );
@@ -129,116 +153,93 @@ class DatabaseHelper {
   Future<int> updateAnimal(Animal a) async => (await database)
       .update('animals', a.toMap()..remove('id'), where: 'id = ?', whereArgs: [a.id]);
 
-  Future<int> deleteAnimal(int id) async {
+  // Milk ab animals se linked nahi hai, is liye animal delete karne par
+  // milk records ko chhedne ki zaroorat nahi.
+  Future<int> deleteAnimal(int id) async =>
+      (await database).delete('animals', where: 'id = ?', whereArgs: [id]);
+
+  // ---------------- Milk (day-wise total) ----------------
+  /// Us din ka total milk. Apni entry na ho aur us mahine ka plan ho to
+  /// plan wala "auto" record milta hai (sirf aaj tak ki dates ke liye).
+  Future<MilkRecord?> getMilkByDate(String date) async {
     final db = await database;
-    await db.delete('milk_records', where: 'animal_id = ?', whereArgs: [id]);
-    await db.delete('milk_plans', where: 'animal_id = ?', whereArgs: [id]);
-    return db.delete('animals', where: 'id = ?', whereArgs: [id]);
+    final rows =
+        await db.query('milk_records', where: 'date = ?', whereArgs: [date]);
+    if (rows.isNotEmpty) return MilkRecord.fromMap(rows.first);
+    if (date.compareTo(_todayStr()) > 0) return null;
+    final plan = await _effectivePlan(date.substring(0, 7), date);
+    if (plan == null) return null;
+    return MilkRecord(
+      date: date,
+      morning: plan.morning,
+      evening: plan.evening,
+      auto: true,
+    );
   }
 
-  // ---------------- Milk ----------------
-  /// Us din ke records. Jis animal ki us din ki apni entry nahi, lekin us mahine
-  /// ka plan hai, uska plan wala milk "auto" record ban kar shamil hota hai
-  /// (sirf aaj tak ki dates ke liye).
-  Future<List<MilkRecord>> getMilkByDate(String date) async {
+  /// Mahine ke har din ka milk (apni entry, warna plan) — date ke hisab se
+  /// barhte order mein. Future waale mahine ke liye khaali list.
+  Future<List<MilkRecord>> getMilkHistory(String ym) async {
     final db = await database;
-    final rows = await db.rawQuery('''
-      SELECT m.*, a.name AS animal_name, a.tag_no AS tag_no
-      FROM milk_records m JOIN animals a ON a.id = m.animal_id
-      WHERE m.date = ? ORDER BY a.name COLLATE NOCASE''', [date]);
-    final list = rows.map(MilkRecord.fromMap).toList();
+    final y = int.parse(ym.substring(0, 4));
+    final mo = int.parse(ym.substring(5, 7));
+    final lastDay = DateTime(y, mo + 1, 0).day;
+    final now = DateTime.now();
+    final cur = now.year * 12 + now.month;
+    final target = y * 12 + mo;
+    final cutoff = target < cur ? lastDay : (target == cur ? now.day : 0);
+    if (cutoff == 0) return [];
 
-    if (date.compareTo(_todayStr()) <= 0) {
-      final have = list.map((r) => r.animalId).toSet();
-      final plans = await db.rawQuery('''
-        SELECT p.*, a.name AS animal_name, a.tag_no AS tag_no
-        FROM milk_plans p JOIN animals a ON a.id = p.animal_id
-        WHERE p.month = ? AND p.from_date <= ? AND a.status = 'Active'
-        ORDER BY p.from_date''', [date.substring(0, 7), date]);
-      // from_date barhte order mein hai, is liye har animal ka aakhri (sab se naya) plan jeetta hai
-      final latest = <int, Map<String, Object?>>{};
-      for (final p in plans) {
-        latest[p['animal_id'] as int] = p;
+    final rows = await db.query('milk_records',
+        where: 'date LIKE ?', whereArgs: ['$ym%']);
+    final byDate = {
+      for (final r in rows) r['date'] as String: MilkRecord.fromMap(r)
+    };
+    final plans = await getPlans(ym);
+
+    final list = <MilkRecord>[];
+    for (var d = 1; d <= cutoff; d++) {
+      final ds = '$ym-${d.toString().padLeft(2, '0')}';
+      final own = byDate[ds];
+      if (own != null) {
+        list.add(own);
+        continue;
       }
-      for (final e in latest.entries) {
-        if (have.contains(e.key)) continue;
-        final p = e.value;
+      MilkPlan? eff;
+      for (final p in plans) {
+        if (p.fromDate.compareTo(ds) <= 0) eff = p;
+      }
+      if (eff != null) {
         list.add(MilkRecord(
-          animalId: e.key,
-          date: date,
-          morning: (p['morning'] as num).toDouble(),
-          evening: (p['evening'] as num).toDouble(),
-          animalName: p['animal_name'] as String?,
-          tagNo: p['tag_no'] as String?,
+          date: ds,
+          morning: eff.morning,
+          evening: eff.evening,
           auto: true,
         ));
       }
-      list.sort((a, b) => (a.animalName ?? '')
-          .toLowerCase()
-          .compareTo((b.animalName ?? '').toLowerCase()));
     }
     return list;
   }
 
   /// Mahine ka total milk: apni entries + plan wale din (jin din entry nahi).
   Future<double> monthMilkTotal(String ym) async =>
-      (await monthMilkByAnimal(ym)).values.fold<double>(0, (s, v) => s + v);
+      (await getMilkHistory(ym)).fold<double>(0, (s, r) => s + r.total);
 
-  /// Mahine ka milk, har animal ka alag (animal id -> liters).
-  Future<Map<int, double>> monthMilkByAnimal(String ym) async {
-    final db = await database;
-    final explicit = await db.rawQuery(
-        'SELECT animal_id, date, morning + evening AS t FROM milk_records WHERE date LIKE ?',
-        ['$ym%']);
-    final per = <int, double>{};
-    final have = <String>{};
-    for (final r in explicit) {
-      final id = r['animal_id'] as int;
-      per[id] = (per[id] ?? 0) + (r['t'] as num).toDouble();
-      have.add('${r['animal_id']}|${r['date']}');
-    }
-
-    final now = DateTime.now();
-    final y = int.parse(ym.substring(0, 4));
-    final mo = int.parse(ym.substring(5, 7));
-    final lastDay = DateTime(y, mo + 1, 0).day;
-    final cur = now.year * 12 + now.month;
-    final target = y * 12 + mo;
-    final cutoff = target < cur ? lastDay : (target == cur ? now.day : 0);
-    if (cutoff == 0) return per;
-
-    final plans = await db.rawQuery('''
-      SELECT p.* FROM milk_plans p JOIN animals a ON a.id = p.animal_id
-      WHERE p.month = ? AND a.status = 'Active' ORDER BY p.from_date''', [ym]);
-    final byAnimal = <int, List<Map<String, Object?>>>{};
-    for (final p in plans) {
-      byAnimal.putIfAbsent(p['animal_id'] as int, () => []).add(p);
-    }
-    for (final e in byAnimal.entries) {
-      for (var d = 1; d <= cutoff; d++) {
-        final ds = '$ym-${d.toString().padLeft(2, '0')}';
-        if (have.contains('${e.key}|$ds')) continue;
-        Map<String, Object?>? eff;
-        for (final p in e.value) {
-          if ((p['from_date'] as String).compareTo(ds) <= 0) eff = p;
-        }
-        if (eff != null) {
-          per[e.key] = (per[e.key] ?? 0) +
-              (eff['morning'] as num).toDouble() +
-              (eff['evening'] as num).toDouble();
-        }
-      }
-    }
-    return per;
+  // ---------------- Monthly plans (farm-wide) ----------------
+  /// Us mahine ke plans (from_date ke hisab se). Aakhri plan jeetta hai.
+  Future<List<MilkPlan>> getPlans(String ym) async {
+    final rows = await (await database).query('milk_plans',
+        where: 'month = ?', whereArgs: [ym], orderBy: 'from_date');
+    return rows.map(MilkPlan.fromMap).toList();
   }
 
-  // ---------------- Monthly plans ----------------
-  Future<List<MilkPlan>> getPlans(String ym) async {
-    final rows = await (await database).rawQuery('''
-      SELECT p.*, a.name AS animal_name, a.tag_no AS tag_no
-      FROM milk_plans p JOIN animals a ON a.id = p.animal_id
-      WHERE p.month = ? ORDER BY p.from_date''', [ym]);
-    return rows.map(MilkPlan.fromMap).toList();
+  /// Kisi date par lagoo plan (from_date <= date wala aakhri plan).
+  Future<MilkPlan?> _effectivePlan(String ym, String date) async {
+    MilkPlan? eff;
+    for (final p in await getPlans(ym)) {
+      if (p.fromDate.compareTo(date) <= 0) eff = p;
+    }
+    return eff;
   }
 
   Future<void> savePlan(MilkPlan p) async => (await database).insert(
@@ -247,12 +248,14 @@ class DatabaseHelper {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
 
-  Future<void> deletePlansFor(int animalId, String ym) async =>
-      (await database).delete('milk_plans',
-          where: 'animal_id = ? AND month = ?', whereArgs: [animalId, ym]);
+  Future<void> deletePlansFor(String ym) async =>
+      (await database).delete('milk_plans', where: 'month = ?', whereArgs: [ym]);
 
-  Future<int> insertMilk(MilkRecord r) async =>
-      (await database).insert('milk_records', r.toMap()..remove('id'));
+  Future<int> insertMilk(MilkRecord r) async => (await database).insert(
+        'milk_records',
+        r.toMap()..remove('id'),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
 
   Future<int> updateMilk(MilkRecord r) async => (await database)
       .update('milk_records', r.toMap()..remove('id'), where: 'id = ?', whereArgs: [r.id]);
@@ -275,6 +278,29 @@ class DatabaseHelper {
 
   Future<int> deleteExpense(int id) async =>
       (await database).delete('expenses', where: 'id = ?', whereArgs: [id]);
+
+  // ---------------- Feed (day-wise) ----------------
+  /// Har din ka total Feed kharcha (date ke hisab se, barhte order mein).
+  Future<List<DayTotal>> feedDailyTotals(String ym) async {
+    final rows = await (await database).rawQuery(
+        "SELECT date, SUM(amount) AS t FROM expenses "
+        "WHERE category = 'Feed' AND date LIKE ? GROUP BY date ORDER BY date",
+        ['$ym%']);
+    return rows
+        .map((r) => DayTotal(r['date'] as String, (r['t'] as num).toDouble()))
+        .toList();
+  }
+
+  /// [from] se [to] tak har din ka total Feed kharcha (barhte order mein).
+  Future<List<DayTotal>> feedDailyTotalsRange(String from, String to) async {
+    final rows = await (await database).rawQuery(
+        "SELECT date, SUM(amount) AS t FROM expenses "
+        "WHERE category = 'Feed' AND date >= ? AND date <= ? GROUP BY date ORDER BY date",
+        [from, to]);
+    return rows
+        .map((r) => DayTotal(r['date'] as String, (r['t'] as num).toDouble()))
+        .toList();
+  }
 
   // ---------------- Sales ----------------
   Future<List<Sale>> getSales() async {
@@ -317,8 +343,7 @@ class DatabaseHelper {
     final today = '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
     final ym = today.substring(0, 7);
-    final todayMilk =
-        (await getMilkByDate(today)).fold<double>(0, (s, r) => s + r.total);
+    final todayMilk = (await getMilkByDate(today))?.total ?? 0;
     final monthMilk = await monthMilkTotal(ym);
     final animals = (await _sum(
             "SELECT COUNT(*) FROM animals WHERE status = 'Active'", []))

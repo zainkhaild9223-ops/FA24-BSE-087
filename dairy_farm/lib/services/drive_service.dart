@@ -18,15 +18,18 @@ class BackupFile {
 }
 
 /// Drive ke My Drive mein "Dairy Farm Backups" folder:
-///   - dairy_backup_*.db            (restore ke liye database)
-///   - Dairy Farm - Animals         (Google Sheet: tag, name, photo link, status, milk)
-///   - Dairy Farm - Milk Records    (Google Sheet: date-wise milk)
+///   - dairy_backup_*.db            (restore ke liye database — poori DB file,
+///                                   is liye day-wise milk/feed khud hi is mein hai)
+///   - Dairy Farm - Animals         (Google Sheet: tag, name, photo link, status)
+///   - Dairy Farm - Milk Records    (Google Sheet: day-wise total milk + running total)
+///   - Dairy Farm - Feed Day Wise   (Google Sheet: day-wise total feed cost + running total)
 ///   - Photos/                      (animals ki photos)
 /// Scope drive.file: app sirf wohi files dekh sakti hai jo usne khud banayi hon.
 class DriveService {
   static const folderName = 'Dairy Farm Backups';
   static const animalsSheetName = 'Dairy Farm - Animals';
   static const milkSheetName = 'Dairy Farm - Milk Records';
+  static const feedSheetName = 'Dairy Farm - Feed Day Wise';
   static const _folderMime = 'application/vnd.google-apps.folder';
   static const _sheetMime = 'application/vnd.google-apps.spreadsheet';
 
@@ -167,13 +170,24 @@ class DriveService {
       convertTo: _sheetMime,
     );
 
-    // 3) Milk records sheet
+    // 3) Milk records sheet (day-wise total)
     final milkCsv = await ReportService.milkCsv();
     await _upsert(
       api,
       name: milkSheetName,
       parent: folderId,
       bytes: utf8.encode(milkCsv),
+      contentType: 'text/csv',
+      convertTo: _sheetMime,
+    );
+
+    // 4) Feed day-wise sheet
+    final feedCsv = await ReportService.feedCsv();
+    await _upsert(
+      api,
+      name: feedSheetName,
+      parent: folderId,
+      bytes: utf8.encode(feedCsv),
       contentType: 'text/csv',
       convertTo: _sheetMime,
     );

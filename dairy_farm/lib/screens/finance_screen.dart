@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../common.dart';
 import '../db/database_helper.dart';
 import '../models.dart';
+
+/// Milk sale ka saved rate (PKR per liter) — aik baar save ho to har sale
+/// mein yehi rate aata hai, jab tak naya save na karo.
+const _rateKey = 'milk_rate';
 
 const _categories = ['Feed', 'Medicine', 'Labor', 'Other'];
 
@@ -53,11 +58,16 @@ class _ExpensesTab extends StatefulWidget {
 }
 
 class _ExpensesTabState extends State<_ExpensesTab> {
-  late Future<(List<Expense>, double)> _future;
+  late Future<(List<Expense>, double, List<DayTotal>)> _future;
 
-  Future<(List<Expense>, double)> _load() async {
+  Future<(List<Expense>, double, List<DayTotal>)> _load() async {
     final db = DatabaseHelper.instance;
-    return (await db.getExpenses(), await db.expenseTotalForMonth(monthPrefix(DateTime.now())));
+    final ym = monthPrefix(DateTime.now());
+    return (
+      await db.getExpenses(),
+      await db.expenseTotalForMonth(ym),
+      await db.feedDailyTotals(ym),
+    );
   }
 
   @override
@@ -79,11 +89,21 @@ class _ExpensesTabState extends State<_ExpensesTab> {
     return Scaffold(
       floatingActionButton:
           FloatingActionButton(heroTag: 'exp', onPressed: () => _open(), child: const Icon(Icons.add)),
-      body: FutureBuilder<(List<Expense>, double)>(
+      body: FutureBuilder<(List<Expense>, double, List<DayTotal>)>(
         future: _future,
         builder: (c, snap) {
           if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-          final (list, total) = snap.data!;
+          final (list, total, feedDays) = snap.data!;
+          // Feed running total — feedDays date ke hisab se barhte order mein hai
+          var run = 0.0;
+          final feedRun = <double>[];
+          for (final d in feedDays) {
+            run += d.total;
+            feedRun.add(run);
+          }
+          final feedMonth = run;
+          final feedRows = feedDays.reversed.toList();
+          final feedRunReversed = feedRun.reversed.toList();
           return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 90), children: [
             AppCard(
               color: kLightGreen,
@@ -91,6 +111,39 @@ class _ExpensesTabState extends State<_ExpensesTab> {
                 const Text('TOTAL EXPENSES (THIS MONTH)', style: TextStyle(color: kGreen, fontSize: 12)),
                 Text(pkr(total),
                     style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              ]),
+            ),
+            // ---- Feed, day-wise: har din ka total Feed kharcha ----
+            AppCard(
+              color: kLightGreen,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('FEED — DAY WISE (THIS MONTH)',
+                      style: TextStyle(color: kGreen, fontSize: 12)),
+                  Text(pkr(feedMonth),
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 8),
+                if (feedDays.isEmpty)
+                  const Text('No feed expense this month.',
+                      style: TextStyle(color: Colors.grey)),
+                ...feedRows.asMap().entries.map((en) {
+                  final d = en.value;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text(d.date,
+                            style: const TextStyle(fontWeight: FontWeight.bold)),
+                      ),
+                      Text('Total so far: ${pkr(feedRunReversed[en.key])}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      const SizedBox(width: 10),
+                      Text(pkr(d.total),
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ]),
+                  );
+                }),
               ]),
             ),
             const Text('Recent Expenses',
@@ -330,6 +383,8 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
   late final TextEditingController _liters;
   late final TextEditingController _rate;
   late final TextEditingController _buyer;
+  double? _dayMilk; // us din ka total doodh (milk record se)
+  bool _litersEdited = false; // user ne liters khud badla ho to auto-fill na karo
 
   @override
   void initState() {
@@ -337,8 +392,26 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
     final s = widget.sale;
     _date = TextEditingController(text: s?.date ?? todayStr());
     _liters = TextEditingController(text: s == null ? '' : s.liters.toString());
-    _rate = TextEditingController(text: s == null ? '180' : s.rate.toString());
+    _rate = TextEditingController(text: s == null ? '' : s.rate.toString());
     _buyer = TextEditingController(text: s?.buyer ?? '');
+    // Nayi sale: liters us din ke milk record se, rate saved rate se
+    if (s == null) _autoFill();
+  }
+
+  /// Nayi sale ke liye: rate saved rate se (na ho to 180), aur liters
+  /// us din ke total milk se (milk record ho to).
+  Future<void> _autoFill() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedRate = prefs.getDouble(_rateKey);
+    final milk = await DatabaseHelper.instance.getMilkByDate(_date.text);
+    if (!mounted) return;
+    setState(() {
+      if (_rate.text.isEmpty) _rate.text = (savedRate ?? 180).toString();
+      if (milk != null) {
+        _dayMilk = milk.total;
+        if (!_litersEdited) _liters.text = milk.total.toString();
+      }
+    });
   }
 
   double get _total =>
@@ -363,6 +436,9 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
     } else {
       await DatabaseHelper.instance.updateSale(s);
     }
+    // Ye rate ab default ban gaya — agli sale mein yehi rate aayega.
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_rateKey, s.rate);
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -380,7 +456,11 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
                 labelText: 'Date', prefixIcon: Icon(Icons.calendar_today_outlined)),
             onTap: () async {
               final d = await pickDate(context, _date.text);
-              if (d != null) setState(() => _date.text = d);
+              if (d != null) {
+                setState(() => _date.text = d);
+                // Nayi sale ho aur liters khud na badla ho to us din ka doodh le aao
+                if (widget.sale == null && !_litersEdited) _autoFill();
+              }
             },
           ),
           const SizedBox(height: 14),
@@ -390,8 +470,14 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
             decoration: const InputDecoration(
                 labelText: 'Liters *', prefixIcon: Icon(Icons.water_drop_outlined)),
             validator: _pos,
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) => setState(() => _litersEdited = true),
           ),
+          if (_dayMilk != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('Is din ka doodh: ${liters(_dayMilk!)} (milk record se)',
+                  style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            ),
           const SizedBox(height: 14),
           TextFormField(
             controller: _rate,
@@ -400,6 +486,12 @@ class _SaleFormScreenState extends State<SaleFormScreen> {
                 labelText: 'Rate per liter (PKR) *', prefixIcon: Icon(Icons.sell_outlined)),
             validator: _pos,
             onChanged: (_) => setState(() {}),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+                'Save karne par ye rate default ban jayega — agli sale mein yehi rate aayega. Rate badalna ho to yahan naya likh kar save kar do.',
+                style: TextStyle(color: Colors.grey, fontSize: 12)),
           ),
           const SizedBox(height: 14),
           TextFormField(

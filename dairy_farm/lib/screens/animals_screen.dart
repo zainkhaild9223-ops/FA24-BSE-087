@@ -37,7 +37,7 @@ class _AnimalsScreenState extends State<AnimalsScreen> {
 
   Future<void> _delete(Animal a) async {
     final ok = await confirmDialog(context, 'Delete Animal Record?',
-        'Delete ${a.name} (${a.tagNo})? All its milk records will also be deleted.');
+        'Delete ${a.name} (${a.tagNo})?');
     if (!ok) return;
     await DatabaseHelper.instance.deleteAnimal(a.id!);
     if (mounted) snack(context, '${a.name} deleted');

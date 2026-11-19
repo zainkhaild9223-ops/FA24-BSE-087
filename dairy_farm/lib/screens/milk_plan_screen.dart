@@ -5,7 +5,8 @@ import '../common.dart';
 import '../db/database_helper.dart';
 import '../models.dart';
 
-/// Har animal ka mahine ka fixed daily milk set karne ki screen.
+/// Poore farm ka mahine ka fixed daily milk set karne ki screen.
+/// (Pehle har animal ka alag plan tha — ab sirf farm ka total plan hai.)
 class MilkPlanScreen extends StatefulWidget {
   const MilkPlanScreen({super.key});
   @override
@@ -14,37 +15,51 @@ class MilkPlanScreen extends StatefulWidget {
 
 class _MilkPlanScreenState extends State<MilkPlanScreen> {
   DateTime _month = DateTime(DateTime.now().year, DateTime.now().month);
-  late Future<(List<Animal>, List<MilkPlan>)> _future;
+  late Future<List<MilkPlan>> _future;
 
   String get _ym => monthPrefix(_month);
-
-  Future<(List<Animal>, List<MilkPlan>)> _load() async {
-    final db = DatabaseHelper.instance;
-    return (await db.getAnimals(filter: 'Active'), await db.getPlans(_ym));
-  }
 
   @override
   void initState() {
     super.initState();
-    _future = _load();
+    _future = DatabaseHelper.instance.getPlans(_ym);
   }
 
-  void _reload() => setState(() => _future = _load());
+  void _reload() => setState(() => _future = DatabaseHelper.instance.getPlans(_ym));
 
   void _shift(int months) {
     _month = DateTime(_month.year, _month.month + months);
     _reload();
   }
 
-  Future<void> _edit(Animal a, MilkPlan? current) async {
+  MilkPlan? _effective(List<MilkPlan> plans, String date) {
+    MilkPlan? eff;
+    for (final p in plans) {
+      if (p.fromDate.compareTo(date) <= 0) eff = p;
+    }
+    return eff;
+  }
+
+  Future<void> _edit(MilkPlan? current) async {
     final changed = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (_) => _PlanSheet(animal: a, month: _month, current: current),
+      builder: (_) => _PlanSheet(month: _month, current: current),
     );
     if (changed == true) _reload();
+  }
+
+  Future<void> _remove() async {
+    final ok = await confirmDialog(
+        context,
+        'Remove plan?',
+        'Remove the monthly milk plan for ${DateFormat('MMMM yyyy').format(_month)}?',
+        yes: 'Remove');
+    if (!ok) return;
+    await DatabaseHelper.instance.deletePlansFor(_ym);
+    _reload();
   }
 
   @override
@@ -59,60 +74,66 @@ class _MilkPlanScreenState extends State<MilkPlanScreen> {
           IconButton(onPressed: () => _shift(1), icon: const Icon(Icons.chevron_right)),
         ]),
         Expanded(
-          child: FutureBuilder<(List<Animal>, List<MilkPlan>)>(
+          child: FutureBuilder<List<MilkPlan>>(
             future: _future,
             builder: (c, snap) {
               if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-              final (animals, plans) = snap.data!;
-              if (animals.isEmpty) {
-                return const EmptyState(icon: Icons.pets, text: 'Add an animal first.');
-              }
+              final plans = snap.data!;
+              final cur = _effective(plans, todayStr());
               return ListView(padding: const EdgeInsets.fromLTRB(16, 0, 16, 24), children: [
                 AppCard(
                   color: kLightGreen,
                   child: const Text(
-                    'Set a fixed daily milk for each animal for this month. '
+                    'Set a fixed daily milk for the whole farm for this month. '
                     'It is counted automatically every day, so you do not need to '
                     'enter it daily. If you enter a record for a day, it replaces the plan for that day.',
                     style: TextStyle(fontSize: 13),
                   ),
                 ),
-                ...animals.map((a) {
-                  // is animal ka sab se naya plan (from_date barhte order mein aate hain)
-                  final mine = plans.where((p) => p.animalId == a.id).toList();
-                  final cur = mine.isEmpty ? null : mine.last;
-                  return AppCard(
-                    onTap: () => _edit(a, cur),
-                    child: Row(children: [
-                      CircleAvatar(
+                AppCard(
+                  onTap: () => _edit(cur),
+                  child: Row(children: [
+                    const CircleAvatar(
                         backgroundColor: kLightGreen,
-                        backgroundImage: a.photo != null ? MemoryImage(a.photo!) : null,
-                        child: a.photo != null
-                            ? null
-                            : const Icon(Icons.pets, color: kGreen),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                          Text('${a.name} (${a.tagNo})',
-                              style: const TextStyle(fontWeight: FontWeight.bold)),
-                          const SizedBox(height: 2),
-                          Text(
-                            cur == null
-                                ? 'No plan set'
-                                : 'M ${cur.morning} + E ${cur.evening}  •  from ${cur.fromDate}',
-                            style: const TextStyle(color: Colors.grey, fontSize: 12),
-                          ),
-                        ]),
-                      ),
-                      Text(cur == null ? '-' : '${liters(cur.total)}/day',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: cur == null ? Colors.grey : kGreen)),
-                      const Icon(Icons.chevron_right, color: Colors.grey),
-                    ]),
-                  );
-                }),
+                        child: Icon(Icons.water_drop, color: kGreen)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        const Text('Daily milk plan (whole farm)',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        Text(
+                          cur == null
+                              ? 'No plan set'
+                              : 'M ${cur.morning} + E ${cur.evening}  •  from ${cur.fromDate}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ]),
+                    ),
+                    Text(cur == null ? '-' : '${liters(cur.total)}/day',
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: cur == null ? Colors.grey : kGreen)),
+                    const Icon(Icons.chevron_right, color: Colors.grey),
+                  ]),
+                ),
+                if (plans.length > 1) ...[
+                  const SizedBox(height: 8),
+                  const Text('Plan changes this month',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  ...plans.map((p) => AppCard(
+                        child: Text(
+                            'From ${p.fromDate}: M ${p.morning} + E ${p.evening} = ${liters(p.total)}/day'),
+                      )),
+                ],
+                if (cur != null) ...[
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: _remove,
+                    child: const Text('Remove plan for this month',
+                        style: TextStyle(color: kRed)),
+                  ),
+                ],
               ]);
             },
           ),
@@ -123,10 +144,9 @@ class _MilkPlanScreenState extends State<MilkPlanScreen> {
 }
 
 class _PlanSheet extends StatefulWidget {
-  final Animal animal;
   final DateTime month;
   final MilkPlan? current;
-  const _PlanSheet({required this.animal, required this.month, this.current});
+  const _PlanSheet({required this.month, this.current});
   @override
   State<_PlanSheet> createState() => _PlanSheetState();
 }
@@ -165,22 +185,11 @@ class _PlanSheetState extends State<_PlanSheet> {
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
     await DatabaseHelper.instance.savePlan(MilkPlan(
-      animalId: widget.animal.id!,
       month: monthPrefix(widget.month),
       fromDate: _from,
       morning: double.parse(_morning.text),
       evening: double.parse(_evening.text),
     ));
-    if (mounted) Navigator.pop(context, true);
-  }
-
-  Future<void> _remove() async {
-    final ok = await confirmDialog(context, 'Remove plan?',
-        'Remove the monthly plan of ${widget.animal.name} for this month?',
-        yes: 'Remove');
-    if (!ok) return;
-    await DatabaseHelper.instance
-        .deletePlansFor(widget.animal.id!, monthPrefix(widget.month));
     if (mounted) Navigator.pop(context, true);
   }
 
@@ -193,7 +202,7 @@ class _PlanSheetState extends State<_PlanSheet> {
         key: _form,
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('${widget.animal.name} - ${DateFormat('MMMM yyyy').format(widget.month)}',
+            Text('Daily Milk Plan - ${DateFormat('MMMM yyyy').format(widget.month)}',
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 14),
             Row(children: [
@@ -244,12 +253,6 @@ class _PlanSheetState extends State<_PlanSheet> {
             ),
             const SizedBox(height: 16),
             ElevatedButton(onPressed: _save, child: const Text('Save Plan')),
-            if (widget.current != null)
-              TextButton(
-                onPressed: _remove,
-                child: const Text('Remove plan for this month',
-                    style: TextStyle(color: kRed)),
-              ),
           ]),
         ),
       ),
