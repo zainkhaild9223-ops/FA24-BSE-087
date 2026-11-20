@@ -27,7 +27,7 @@ class DatabaseHelper {
   static final DatabaseHelper instance = DatabaseHelper._();
   static const dbName = 'dairy.db';
 
-  // Monthly milk plan: poore farm ka fixed daily milk, mahine ke hisab se
+
   static const _planTableSql = '''CREATE TABLE IF NOT EXISTS milk_plans(
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     month TEXT NOT NULL,
@@ -63,7 +63,7 @@ class DatabaseHelper {
           name TEXT, type TEXT, breed TEXT, dob TEXT,
           status TEXT DEFAULT 'Active',
           photo BLOB)''');
-        // Milk ab day-wise hai: har date ki sirf aik entry (poore farm ka total)
+
         await db.execute('''CREATE TABLE milk_records(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           date TEXT NOT NULL UNIQUE,
@@ -77,7 +77,7 @@ class DatabaseHelper {
           date TEXT NOT NULL, liters REAL, rate REAL, total REAL, buyer TEXT)''');
         await db.execute(_planTableSql);
       },
-      // Purani database mein photo column add karta hai, data safe rehta hai
+
       onUpgrade: (db, oldV, newV) async {
         if (oldV < 2) {
           await db.execute('ALTER TABLE animals ADD COLUMN photo BLOB');
@@ -86,8 +86,7 @@ class DatabaseHelper {
           await db.execute(_planTableSql);
         }
         if (oldV < 4) {
-          // Purana per-animal milk -> day-wise total (har date ka sum).
-          // Kisi din ka total wahi rehta hai, sirf cow-wise tafseel khatam hoti hai.
+
           await db.execute('''CREATE TABLE milk_records_new(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             date TEXT NOT NULL UNIQUE,
@@ -98,7 +97,7 @@ class DatabaseHelper {
             FROM milk_records GROUP BY date''');
           await db.execute('DROP TABLE milk_records');
           await db.execute('ALTER TABLE milk_records_new RENAME TO milk_records');
-          // Purane per-animal plans -> farm-wide plan (har from_date ka sum)
+
           await db.execute('''CREATE TABLE milk_plans_new(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             month TEXT NOT NULL,
@@ -116,14 +115,13 @@ class DatabaseHelper {
     );
   }
 
-  /// Backup/restore se pehle DB band karna zaroori hai.
-  /// Agli query par database dobara khud khul jata hai.
+
   Future<void> close() async {
     await _db?.close();
     _db = null;
   }
 
-  // ---------------- Animals ----------------
+
   Future<List<Animal>> getAnimals({String search = '', String filter = 'All'}) async {
     final db = await database;
     final where = <String>[];
@@ -153,14 +151,11 @@ class DatabaseHelper {
   Future<int> updateAnimal(Animal a) async => (await database)
       .update('animals', a.toMap()..remove('id'), where: 'id = ?', whereArgs: [a.id]);
 
-  // Milk ab animals se linked nahi hai, is liye animal delete karne par
-  // milk records ko chhedne ki zaroorat nahi.
+
   Future<int> deleteAnimal(int id) async =>
       (await database).delete('animals', where: 'id = ?', whereArgs: [id]);
 
-  // ---------------- Milk (day-wise total) ----------------
-  /// Us din ka total milk. Apni entry na ho aur us mahine ka plan ho to
-  /// plan wala "auto" record milta hai (sirf aaj tak ki dates ke liye).
+
   Future<MilkRecord?> getMilkByDate(String date) async {
     final db = await database;
     final rows =
@@ -177,8 +172,7 @@ class DatabaseHelper {
     );
   }
 
-  /// Mahine ke har din ka milk (apni entry, warna plan) — date ke hisab se
-  /// barhte order mein. Future waale mahine ke liye khaali list.
+
   Future<List<MilkRecord>> getMilkHistory(String ym) async {
     final db = await database;
     final y = int.parse(ym.substring(0, 4));
@@ -221,19 +215,18 @@ class DatabaseHelper {
     return list;
   }
 
-  /// Mahine ka total milk: apni entries + plan wale din (jin din entry nahi).
+
   Future<double> monthMilkTotal(String ym) async =>
       (await getMilkHistory(ym)).fold<double>(0, (s, r) => s + r.total);
 
-  // ---------------- Monthly plans (farm-wide) ----------------
-  /// Us mahine ke plans (from_date ke hisab se). Aakhri plan jeetta hai.
+
   Future<List<MilkPlan>> getPlans(String ym) async {
     final rows = await (await database).query('milk_plans',
         where: 'month = ?', whereArgs: [ym], orderBy: 'from_date');
     return rows.map(MilkPlan.fromMap).toList();
   }
 
-  /// Kisi date par lagoo plan (from_date <= date wala aakhri plan).
+
   Future<MilkPlan?> _effectivePlan(String ym, String date) async {
     MilkPlan? eff;
     for (final p in await getPlans(ym)) {
@@ -263,7 +256,7 @@ class DatabaseHelper {
   Future<int> deleteMilk(int id) async =>
       (await database).delete('milk_records', where: 'id = ?', whereArgs: [id]);
 
-  // ---------------- Expenses ----------------
+
   Future<List<Expense>> getExpenses() async {
     final rows = await (await database)
         .query('expenses', orderBy: 'date DESC, id DESC', limit: 200);
